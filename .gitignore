@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+
+# Data & Cache
+cache/
+data/
+logs/
+
+# Config with secrets (add template instead)
+# config.py
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Config with secrets
+config.py
+*.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# WorkBuddy (don't commit automation memory)
+.codebuddy/
+.workbuddy/
+
+# Temporary files
+*.tmp
+*.log

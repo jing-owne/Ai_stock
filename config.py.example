@@ -1,0 +1,227 @@
+# -*- coding: utf-8 -*-
+"""
+AI智能选股系统配置文件
+参考: go-stock, myhhub/stock, zvt, hikyuu, northstar 的选股策略
+"""
+
+import os
+
+# ==================== 基础配置 ====================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+LOG_DIR = os.path.join(BASE_DIR, "logs")
+
+# 确保目录存在
+os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(LOG_DIR, exist_ok=True)
+
+# ==================== 邮件配置 ====================
+EMAIL_CONFIG = {
+    "enabled": True,  # 启用邮件发送
+    "debug_mode": False,  # 调试模式（只发邮件不抄送）
+    "skip_money_flow": True,  # 跳过耗时资金流向查询（节省约500秒）
+    "sender_name": "Marcus策略师",  # 发件人名称
+    "smtp_server": "smtp.qq.com",  # QQ邮箱SMTP服务器
+    "smtp_port": 465,  # SSL端口
+    "smtp_user": "your_email@qq.com",  # 发送邮箱
+    "smtp_password": "YOUR_SMTP_AUTH_CODE",  # SMTP授权码（QQ邮箱设置->账户->POP3/SMTP服务->生成授权码）
+    "to_emails": ["your_recipient@139.com"],  # 收件人
+    "cc_emails": ["cc1@qq.com", "cc2@qq.com"],  # 抄送
+    "subject_prefix": "[Marcus量化选股]",  # 邮件主题前缀
+}
+
+# ==================== AI配置 ====================
+AI_CONFIG = {
+    "enabled": True,  # 启用AI分析
+    "provider": "deepseek",  # deepseek / openai / local
+    "api_key": "",  # 需要填写API密钥
+    "model": "deepseek-chat",
+    "base_url": "https://api.deepseek.com",
+    "temperature": 0.7,
+    "max_tokens": 2000,
+}
+
+# ==================== 数据源配置 ====================
+# 股票数据API
+STOCK_API = {
+    "eastmoney": "https://push2.eastmoney.com/api/qt/clist/get",  # 东方财富行情
+    "sina": "https://hq.sinajs.cn/list=",  # 新浪实时行情
+    "tencent": "https://qt.gtimg.cn/q=",  # 腾讯行情
+}
+
+# 财经新闻网站
+NEWS_SOURCES = [
+    "https://www.caijing.com.cn/",
+    "https://finance.eastmoney.com/",
+    "https://finance.sina.com.cn/",
+    "https://www.cbnweek.com/",
+    "https://cnfol.com/",
+    "https://xueqiu.com/",
+]
+
+# 每日一言API
+DAILY_QUOTE_API = "https://yunshangtool.cn/daily-quote/"
+
+# ==================== 选股策略配置 ====================
+# 参考: go-stock AI选股策略
+STRATEGY_GOSTOCK = {
+    "name": "go-stock AI策略",
+    "enabled": True,
+    "weight": 0.25,  # 权重
+    "description": "基于AI分析市场情绪、资金流向、技术形态",
+    # AI分析维度
+    "ai_dimensions": [
+        "技术形态评分",
+        "资金净流入",
+        "市场情绪热度",
+        "消息面影响",
+    ],
+}
+
+# 参考: myhhub/stock 多因子选股策略
+STRATEGY_MYHHUB = {
+    "name": "myhhub 多因子策略",
+    "enabled": True,
+    "weight": 0.25,
+    "description": "综合基本面+技术面+信息面多因子评分",
+    "factors": {
+        # 基本面因子
+        "pe_ratio": {"min": 5, "max": 50, "weight": 0.15},  # 市盈率
+        "pb_ratio": {"min": 0.5, "max": 5, "weight": 0.10},  # 市净率
+        "roe": {"min": 5, "weight": 0.15},  # 净资产收益率
+        "revenue_growth": {"min": 0, "weight": 0.10},  # 营收增长率
+        # 技术面因子
+        "ma5_above_ma10": True,  # 5日线在10日线上方
+        "volume_ratio": {"min": 1.2, "weight": 0.10},  # 量比
+        "price_change": {"min": 1, "max": 8, "weight": 0.15},  # 涨幅
+        # 情绪因子
+        "turnover_rate": {"min": 3, "weight": 0.10},  # 换手率
+        "amplitude": {"min": 2, "max": 10, "weight": 0.15},  # 振幅
+    },
+}
+
+# 参考: zvt 多因子轮动策略
+STRATEGY_ZVT = {
+    "name": "zvt 多因子策略",
+    "enabled": True,
+    "weight": 0.25,
+    "description": "中低频多因子选股，支持行业轮动",
+    "factors": {
+        "value_factors": ["pe", "pb", "ps", "pcf"],  # 估值因子
+        "momentum_factors": ["ma5", "ma20", "ma60"],  # 动量因子
+        "quality_factors": ["roe", "roa", "gross_margin"],  # 质量因子
+        "industry轮动": True,
+        "market_cap_rank": {"top_percent": 0.3},  # 市值前30%
+    },
+}
+
+# 参考: hikyuu 极速量化策略
+STRATEGY_HIKYUU = {
+    "name": "hikyuu 量化策略",
+    "enabled": True,
+    "weight": 0.15,
+    "description": "C++极速回测，均值回归+趋势跟踪",
+    "strategies": {
+        "mean_reversion": {
+            "enabled": True,
+            "description": "均值回归：股价偏离均线过大时买入",
+            "indicators": ["布林带", "肯特纳通道"],
+        },
+        "trend_following": {
+            "enabled": True,
+            "description": "趋势跟踪：均线多头排列时持有",
+            "indicators": ["MA5>MA20>MA60", "MACD金叉"],
+        },
+    },
+}
+
+# 参考: northstar 专业量化策略
+STRATEGY_NORTHSTAR = {
+    "name": "northstar 专业策略",
+    "enabled": True,
+    "weight": 0.10,
+    "description": "专业级量化，支持多市场多周期",
+    "modules": {
+        "technical_analysis": True,  # 技术分析模块
+        "ai_assist": True,  # AI辅助决策
+        "risk_management": {
+            "max_position": 0.2,  # 单只最大仓位20%
+            "stop_loss": 0.05,  # 止损5%
+            "take_profit": 0.15,  # 止盈15%
+        },
+    },
+}
+
+# ==================== 过滤规则 ====================
+FILTER_RULES = {
+    # 过滤科创板(688开头)
+    "exclude_code_prefix": ["688"],
+    # 过滤北交所(8开头)
+    "exclude_bj": True,
+    # 过滤ST股
+    "exclude_st": True,
+    # 过滤停牌
+    "exclude_suspended": True,
+    # 过滤涨停（涨幅>=8%，涨停无法买进）
+    "exclude_limit_up": True,  # 过滤涨停股
+    "limit_up_threshold": 8.0,  # 涨停阈值（涨幅>=8%视为涨停）
+    # 过滤跌停
+    "exclude_limit_down": True,
+    # 成交额最低限制（万元）
+    "min_turnover": 3000,  # 3000万
+    # 涨幅范围（要求强劲但未涨停）
+    "change_pct_range": {"min": 0, "max": 9.9},  # 0%-9.9%，扩大范围以选出更多股票
+    # 接近涨停惩罚（涨幅>8%降权）- 已废除，涨停直接过滤
+    "near_limit_penalty": False,  # 关闭降权
+    "near_limit_threshold": 9.5,
+    # 净流入配置（模拟/简化版）
+    "net_inflow_check": False,  # 暂时关闭净流入筛选
+    "net_inflow_days": [5, 20],  # 5日、20日净流入检测
+}
+
+# ==================== 选股数量配置 ====================
+SELECTION_CONFIG = {
+    "top_n": 15,  # 最终输出前15只（综合评分）
+    "min_score": 60,  # 最低评分门槛
+    "strategy_candidates": 15,  # 每个策略候选股票数量
+    "strategy_min_score": 35,  # 策略筛选最低分（降低门槛以选出更多）
+    "market_filter": "all",  # all / sh / sz / bj
+}
+
+# ==================== 胜率评分配置 ====================
+WIN_RATE_CONFIG = {
+    # 胜率因子权重
+    "factors": {
+        "strategy_count": 0.25,      # 策略一致性 (多策略同时选中的股票更可靠)
+        "change_pct": 0.20,          # 涨幅健康度 (2%-8%最佳)
+        "turnover_rate": 0.15,      # 换手活跃度
+        "volume_ratio": 0.10,       # 量比放大
+        "pe_ratio": 0.10,           # 市盈率合理
+        "market_cap": 0.10,         # 市值合理
+        "amplitude": 0.10,          # 振幅适中
+    },
+    # 胜率基础值和范围
+    "base_win_rate": 45,            # 基础胜率45%
+    "max_win_rate": 92,             # 最高胜率92%
+    "min_win_rate": 35,             # 最低胜率35%
+}
+
+# ==================== 排序配置 ====================
+RANKING_CONFIG = {
+    # 排序因子权重
+    "sort_factors": {
+        "final_score": 0.40,        # 综合评分权重
+        "win_rate": 0.35,           # 胜率权重
+        "change_pct": 0.15,         # 涨幅权重（适度偏好强势）
+        "strategy_count": 0.10,     # 策略数量权重
+    },
+}
+
+# ==================== 输出格式配置 ====================
+OUTPUT_CONFIG = {
+    "show_signature": True,  # 显示个人签名
+    "show_daily_quote": True,  # 显示每日一言
+    "show_strategy_detail": True,  # 显示策略详情
+    "show_win_rate": True,  # 显示胜率
+    "encoding": "utf-8",
+}
