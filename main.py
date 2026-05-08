@@ -349,15 +349,15 @@ class AISStockSelector:
         report.append("【策略说明】")
         report.append("-" * 70)
         report.append("综合5大量化策略 + 北向资金因子进行选股：")
-        report.append("• go-stock AI策略 (20%): 技术形态 + 资金流向 + 市场情绪")
-        report.append("• myhhub 多因子策略 (20%): PE + PB + ROE + 营收增长 + 量价")
-        report.append("• zvt 多因子策略 (15%): 估值因子 + 动量因子 + 质量因子")
-        report.append("• hikyuu 量化策略 (20%): 布林带 + 均线排列 + MACD")
-        report.append("• northstar 专业策略 (25%): 技术分析 + 风险评估 + AI信号")
+        report.append("• go-stock AI策略 (25%): 技术形态 + 资金流向 + 市场情绪")
+        report.append("• myhhub 多因子策略 (30%): PE + PB + ROE + 营收增长 + 量价")
+        report.append("• zvt 多因子策略 (25%): 估值因子 + 动量因子 + 质量因子")
+        report.append("• hikyuu 量化策略 (10%): 布林带 + 均线排列 + MACD")
+        report.append("• northstar 专业策略 (5%): 技术分析 + 风险评估 + AI信号")
         report.append("• ⭐北向资金加分: 外资增持标的 +5~15分")
         report.append("• ⭐行业政策支持: 政策重点方向 +3~10分")
         report.append("")
-        report.append("⚠️ 评分机制：涨幅>8%自动降权（接近涨停风险较高）")
+        report.append("⚠️ 评分机制：涨幅>8%自动过滤，胜率门槛65%+")
 
         # ==================== 动态资讯 ====================
         if news:
