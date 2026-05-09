@@ -59,6 +59,24 @@ class StrategyConfig:
         "min_inst_count": 3,          # 最少机构数
         "min_inst_ratio": 0.05,      # 最少机构持股比例
     })
+    
+    # 复合策略权重配置
+    composite_strategy: Dict[str, Any] = field(default_factory=lambda: {
+        "strategy_count_weight": 0.35,   # 策略数量权重 (25% → 35%)
+        "myhhub_weight": 0.30,            # 基本面因子权重 (25% → 30%)
+        "hikyuu_weight": 0.10,            # 趋势策略权重 (15% → 10%)
+        "northstar_weight": 0.05,          # 北向资金权重 (10% → 5%)
+        "base_win_rate": 0.50,             # 胜率基础值 (45% → 50%)
+        "min_win_rate": 0.65,             # 新增胜率门槛
+    })
+    
+    # 基本面筛选条件
+    fundamental_filter: Dict[str, Any] = field(default_factory=lambda: {
+        "min_roe": 0.08,                  # ROE门槛 (≥5% → ≥8%)
+        "min_revenue_growth": 0.05,       # 营收增长 (≥0% → ≥5%)
+        "min_profit_growth": 0.10,        # 净利润增长门槛
+        "max_debt_ratio": 0.60,           # 最大负债率
+    })
 
 
 @dataclass
@@ -184,6 +202,8 @@ class Config:
                 "multi_factor": self.strategy.multi_factor,
                 "ai_technical": self.strategy.ai_technical,
                 "institution": self.strategy.institution,
+                "composite_strategy": self.strategy.composite_strategy,
+                "fundamental_filter": self.strategy.fundamental_filter,
             },
             "report": {
                 "format": self.report.format,

@@ -193,9 +193,3 @@ email:
 | v1.5.0 | 2026-05-09 | 模块化重构、Agent架构设计、多策略支持 |
 | v1.0.0 | 2026-04-08 | 初始版本 |
 
----
-
-## 📚 相关项目
-
-- [Marcus-A-Trading-Assistant](https://github.com/jing-owne/Marcus-A-Trading-Assistant) - Marcus A股交易助手
-- [ai_stock_selector](https://github.com/jing-owne/ai_stock_selector) - 多策略选股系统

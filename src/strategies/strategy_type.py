@@ -11,6 +11,10 @@ class StrategyType(Enum):
     MULTI_FACTOR = "multi_factor"           # 多因子策略
     AI_TECHNICAL = "ai_technical"          # AI技术面策略
     INSTITUTION = "institution"             # 机构追踪策略
+    STRATEGY_COUNT = "strategy_count"       # 策略数量评分
+    MYHHUB = "myhhub"                       # 基本面因子
+    HIKYUU = "hikyuu"                     # 趋势策略
+    NORTHSTAR = "northstar"                 # 北向资金策略
     
     @classmethod
     def from_string(cls, value: str) -> "StrategyType":
