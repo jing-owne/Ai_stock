@@ -469,13 +469,16 @@ MarketAgent  ← 获取市场数据
 
 本项目在设计与实现过程中，参考了以下优秀的开源量化项目，在此致以诚挚的谢意：
 
-| 项目 | 说明 | 参考内容 |
+| 项目 | 地址 | 参考内容 |
 |------|------|----------|
-| **[Hikyuu 海阔量化](https://github.com/fasiondog/hikyuu)** | 开源量化交易框架 | 多因子策略设计思路、技术指标计算方式 |
-| **[MyStock 我的股票系统](https://github.com/nicktming/my-stock)** | A股量化回测框架 | 策略评估指标（胜率/夏普比率）设计 |
-| **[NorthStar 北向星](https://github.com/xxx)** | AI量化策略框架 | AI技术面分析、形态识别思路 |
-| **东方财富 OpenAPI** | 金融数据接口 | K线数据、资金流向接口设计 |
-| **腾讯行情接口** (qt.gtimg.cn) | 实时行情数据源 | 免费实时行情数据获取方式 |
+| **stock (myhhub)** | [github.com/myhhub/stock](https://github.com/myhhub/stock) | 选股策略设计思路、实盘策略参考 |
+| **star (hustcer)** | [github.com/hustcer/star](https://github.com/hustcer/star) | A股量化回测框架设计思路 |
+| **stock (Rockyzsu)** | [github.com/Rockyzsu/stock](https://github.com/Rockyzsu/stock) | 多因子选股与评分模型参考 |
+| **go-stock (ArvinLovegood)** | [github.com/ArvinLovegood/go-stock](https://github.com/ArvinLovegood/go-stock) | Go语言量化框架设计思路 |
+| **zvt (foolcage)** | [gitee.com/foolcage/zvt](https://gitee.com/foolcage/zvt) | 金融数据框架、技术指标计算方式 |
+| **Hikyuu 海阔量化** | [github.com/fasiondog/hikyuu](https://github.com/fasiondog/hikyuu) | 多因子策略设计、技术指标计算 |
+| **东方财富 OpenAPI** | 公开数据接口 | K线数据、资金流向接口设计 |
+| **腾讯行情接口** (qt.gtimg.cn) | 公开数据接口 | 免费实时行情数据获取方式 |
 
 若您认为本项目的任何实现与您的开源项目有相似之处，欢迎联系，我们将在后续版本中补充完整的引用说明。
 
