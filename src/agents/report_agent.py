@@ -62,7 +62,7 @@ class ReportAgent:
         )
         
         # 生成报告
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%y-%m-%d %H-%M")
         
         if format == "html":
             filename = f"scan_report_{timestamp}.html"
@@ -104,7 +104,7 @@ class ReportAgent:
         
         # ==================== 报告标题 ====================
         lines.append("=" * 60)
-        lines.append("【Marcus量化选股系统】")
+        lines.append("【Marcus策略选股小助手】")
         lines.append(f"报告日期: {today} {now}")
         lines.append("=" * 60)
         

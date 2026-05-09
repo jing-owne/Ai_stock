@@ -102,7 +102,7 @@ class EmailConfig:
     smtp_password: str = ""        # SMTP授权码
     to_emails: list = field(default_factory=list)  # 收件人
     cc_emails: list = field(default_factory=list)  # 抄送
-    subject_prefix: str = "[Marcus量化选股]"  # 邮件主题前缀
+    subject_prefix: str = ""  # 已废弃，邮件标题由代码直接生成
 
 
 @dataclass
