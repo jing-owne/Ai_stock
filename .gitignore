@@ -63,3 +63,6 @@ Thumbs.db
 # Project specific
 output/
 *.log
+
+# Sensitive configuration (contains SMTP passwords and API keys)
+configs/settings.yaml
