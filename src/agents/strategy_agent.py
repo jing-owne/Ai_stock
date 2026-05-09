@@ -3,7 +3,7 @@
 负责执行各种量化选股策略
 """
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 
 from ..core.types import StockData, ScanResult, StrategyType
@@ -60,6 +60,51 @@ class StrategyAgent:
         except Exception as e:
             self.logger.error(f"策略执行失败: {e}")
             return []
+    
+    def execute_with_context(
+        self,
+        strategy_type: StrategyType,
+        market_data: List[StockData],
+        **kwargs
+    ) -> Tuple[List[ScanResult], Dict[str, Any]]:
+        """
+        执行策略并返回附加上下文信息（市场状态、权重等）
+        
+        Args:
+            strategy_type: 策略类型
+            market_data: 市场数据
+            **kwargs: 策略参数
+            
+        Returns:
+            (results, context) 元组
+            context 包含: market_state, weights 等
+        """
+        from ..strategies.composite_strategy import CompositeStrategy
+        
+        results = self.execute(strategy_type, market_data, **kwargs)
+        
+        context: Dict[str, Any] = {}
+        
+        # 如果是综合策略，尝试从 CompositeStrategy 获取上下文
+        if strategy_type == StrategyType.COMPOSITE:
+            strategy = self.registry.get_strategy(strategy_type)
+            if isinstance(strategy, CompositeStrategy):
+                # 重新执行一次获取上下文（CompositeStrategy 内部已缓存）
+                params = self._get_strategy_params(strategy_type)
+                params.update(kwargs)
+                # CompositeStrategy 内部会检测市场状态并使用权重
+                # 我们从配置中读取动态权重状态
+                comp_cfg = params.get("composite_strategy", {})
+                context["market_state"] = comp_cfg.get("_last_market_state", "volatile")
+                context["weights"] = comp_cfg.get("_last_weights", {
+                    "volume_surge": 0.25,
+                    "turnover_rank": 0.25,
+                    "multi_factor": 0.25,
+                    "ai_technical": 0.15,
+                    "institution": 0.10,
+                })
+        
+        return results, context
     
     def _get_strategy_params(self, strategy_type: StrategyType) -> Dict[str, Any]:
         """获取策略配置参数"""

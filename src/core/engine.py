@@ -30,6 +30,7 @@ class AInvestEngine:
         """
         self.config = config or Config()
         self.logger = self._setup_logger()
+        self._last_strategy_context: Dict[str, Any] = {}  # 最近一次扫描的策略上下文
         
         # 初始化Agent
         self.data_agent = DataAgent(self.config)
@@ -77,8 +78,17 @@ class AInvestEngine:
         market_data = self.data_agent.fetch_market_data()
         self.logger.info(f"获取市场数据: {len(market_data)}只股票")
         
-        # 2. 策略执行
-        results = self.strategy_agent.execute(strategy, market_data, **kwargs)
+        # 2. 策略执行（综合策略额外获取市场状态和权重）
+        from ..core.types import StrategyType
+        if strategy == StrategyType.COMPOSITE:
+            results, context = self.strategy_agent.execute_with_context(
+                strategy, market_data, **kwargs
+            )
+            self._last_strategy_context = context
+        else:
+            results = self.strategy_agent.execute(strategy, market_data, **kwargs)
+            self._last_strategy_context = {}
+        
         self.logger.info(f"策略执行完成: {len(results)}个候选股票")
         
         # 3. 排序和筛选

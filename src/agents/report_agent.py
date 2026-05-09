@@ -4,7 +4,7 @@
 """
 import os
 import logging
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 from pathlib import Path
 
@@ -90,48 +90,68 @@ class ReportAgent:
         
         return str(output_path)
     
-    def generate_summary(self, results: List[ScanResult]) -> str:
+    def generate_summary(
+        self,
+        results: List[ScanResult],
+        market_state: Optional[str] = None,
+        strategy_weights: Optional[Dict[str, float]] = None
+    ) -> str:
         """
         生成丰富的文本摘要（用于邮件发送）
         
-        参考参考项目的邮件格式
+        Args:
+            results: 扫描结果
+            market_state: 市场状态（趋势上涨/下跌/震荡）
+            strategy_weights: 各子策略权重
         """
-        from datetime import datetime
+        from datetime import datetime as dt
         
         lines = []
-        today = datetime.now().strftime('%Y年%m月%d日')
-        now = datetime.now().strftime('%H:%M:%S')
+        today = dt.now().strftime('%Y年%m月%d日')
+        now = dt.now().strftime('%H:%M')
         
-        # ==================== 报告标题 ====================
-        lines.append("=" * 60)
-        lines.append("【Marcus策略选股小助手】")
-        lines.append(f"报告日期: {today} {now}")
-        lines.append("=" * 60)
+        # ── 市场状态映射 ──────────────────────────────
+        state_map = {
+            "trend_up": "上涨趋势",
+            "trend_down": "下跌趋势",
+            "volatile": "震荡市",
+        }
+        state_desc = state_map.get(market_state, "震荡市") if market_state else "震荡市"
         
-        # ==================== 策略说明 ====================
+        # ── 策略权重映射 ──────────────────────────────
+        weight_descs = {
+            "volume_surge": "放量上涨",
+            "turnover_rank": "成交额排名",
+            "multi_factor": "多因子",
+            "ai_technical": "AI技术面",
+            "institution": "机构追踪",
+        }
+        w = strategy_weights or {}
+        
+        # ── 策略说明 ─────────────────────────────────
+        lines.append("━" * 60)
+        lines.append("【策略配置】")
+        lines.append("━" * 60)
+        lines.append(f"• 市场状态: {state_desc}（系统自动判断）")
+        if w:
+            weight_parts = [f"{weight_descs.get(k, k)} {v*100:.0f}%" for k, v in sorted(w.items(), key=lambda x: -x[1]) if v > 0]
+            lines.append(f"• 策略权重: {' + '.join(weight_parts)}")
+        else:
+            lines.append("• 策略权重: 放量上涨 25% + 成交额排名 25% + 多因子 25% + AI技术面 15% + 机构追踪 10%")
+        
+        # ── 选股结果 ─────────────────────────────────
         lines.append("")
-        lines.append("-" * 60)
-        lines.append("【策略说明】")
-        lines.append("-" * 60)
-        lines.append("• 放量上涨策略: 基于成交量突增筛选强势股票")
-        lines.append("• 评分机制: 综合涨幅、成交额、量比等因素")
-        lines.append("• 筛选条件: 放量倍数≥2.0, 涨幅≥1%, 成交额≥1亿")
-        
-        # ==================== 选股结果 ====================
-        lines.append("")
-        lines.append("-" * 60)
-        lines.append("【股票选择】（按综合评分排序）")
-        lines.append("-" * 60)
+        lines.append("━" * 60)
+        lines.append("【股票选择】（按综合评分降序排列）")
+        lines.append("━" * 60)
         
         if not results:
             lines.append("今日暂无符合条件的股票。")
         else:
-            # 统计数据
             up_count = sum(1 for r in results if r.data and r.data.change_pct > 0)
             avg_change = sum(r.data.change_pct if r.data else 0 for r in results) / len(results) if results else 0
             total_amount = sum(r.data.amount if r.data else 0 for r in results)
             
-            # 简要统计
             lines.append("")
             lines.append(f"• 共筛选出 {len(results)} 只优质股票")
             lines.append(f"• 其中 {up_count} 只上涨，{len(results) - up_count} 只下跌/平盘")
@@ -139,19 +159,18 @@ class ReportAgent:
             lines.append(f"• 总成交额: {total_amount/1e8:.2f}亿")
             lines.append("")
             
-            # Top 10 详细列表
+            # Top 10 详细列表（多行展示信号）
             lines.append("▶ Top 10 推荐股票")
             lines.append("")
             
             # 表头
-            lines.append("序号 | 股票名称 | 代码 | 评分 | 涨幅 | 成交额 | 入选信号")
-            lines.append("-" * 60)
+            lines.append("序号 | 股票名称 | 代码 | 评分 | 涨幅 | 成交额")
+            lines.append("--- | --- | --- | --- | --- | ---")
             
             for i, result in enumerate(results[:10], 1):
                 name = result.name
                 symbol = result.symbol
                 score = result.score
-                signals = ", ".join(result.signals[:2])
                 
                 if result.data:
                     change_pct = result.data.change_pct
@@ -162,51 +181,61 @@ class ReportAgent:
                     amount_str = "N/A"
                     change_str = "N/A"
                 
-                lines.append(f"{i} | {name} | {symbol} | {score:.1f} | {change_str} | {amount_str} | {signals}")
+                lines.append(f"{i} | {name} | {symbol} | {score:.1f} | {change_str} | {amount_str}")
             
-            # 更多股票概览
+            # 入选信号说明（单独列在表格下方）
+            lines.append("")
+            lines.append("▶ 入选信号说明")
+            all_signals = []
+            for result in results[:10]:
+                all_signals.extend(result.signals)
+            # 统计各信号出现频次
+            signal_count: Dict[str, int] = {}
+            for s in all_signals:
+                signal_count[s] = signal_count.get(s, 0) + 1
+            top_signals = sorted(signal_count.items(), key=lambda x: -x[1])[:8]
+            for sig, cnt in top_signals:
+                lines.append(f"  • {sig}（命中 {cnt} 次）")
+            
             if len(results) > 10:
                 lines.append("")
                 lines.append(f"• 还有 {len(results) - 10} 只备选股票（详见附件）")
         
-        # ==================== 操作建议 ====================
+        # ── 操作建议 ─────────────────────────────────
         lines.append("")
-        lines.append("-" * 60)
+        lines.append("━" * 60)
         lines.append("【操作建议】")
-        lines.append("-" * 60)
+        lines.append("━" * 60)
         
         if results:
-            # Top 3 操作建议
             for i, result in enumerate(results[:3], 1):
-                # 使用 close 作为当前价格
                 current_price = result.data.close if result.data else 0
-                entry_price = current_price * 0.98  # 参考买入价（-2%）
-                stop_loss = current_price * 0.95    # 止损价（-5%）
-                take_profit = current_price * 1.08  # 止盈价（+8%）
+                entry_price = current_price * 0.98
+                stop_loss = current_price * 0.95
+                take_profit = current_price * 1.08
                 
                 lines.append("")
                 lines.append(f"▶ {i}. {result.name}({result.symbol})")
-                lines.append(f"   操作建议: 关注")
                 lines.append(f"   当前价格: {current_price:.2f}元")
-                lines.append(f"   买入参考价: {entry_price:.2f}元（参考-2%）")
-                lines.append(f"   止损位: {stop_loss:.2f}元（-5%）")
-                lines.append(f"   止盈位: {take_profit:.2f}元（+8%）")
+                lines.append(f"   买入参考: {entry_price:.2f}元（-2%）")
+                lines.append(f"   止损位:   {stop_loss:.2f}元（-5%）")
+                lines.append(f"   止盈位:   {take_profit:.2f}元（+8%）")
                 lines.append(f"   综合评分: {result.score:.1f}")
-                lines.append(f"   入选信号: {', '.join(result.signals[:3])}")
+                # 展示该股所有入选信号
+                if result.signals:
+                    sig_lines = " / ".join(result.signals)
+                    lines.append(f"   入选信号: {sig_lines}")
         
-        # ==================== 风险提示 ====================
+        # ── 风险提示 ─────────────────────────────────
         lines.append("")
-        lines.append("=" * 60)
+        lines.append("━" * 60)
         lines.append("【风险提示】")
-        lines.append("=" * 60)
+        lines.append("━" * 60)
         lines.append("• 以上仅供参考，不构成投资建议")
         lines.append("• 股市有风险，投资需谨慎")
         lines.append("• 建议分散持仓，单只仓位不超过总资金的20%")
         lines.append("• 必须设置止损位（建议-5%），严格执行")
         lines.append("• 量化模型有局限性，请结合个人判断决策")
-        
-        lines.append("")
-        lines.append("=" * 60)
         
         return '\n'.join(lines)
     
@@ -215,7 +244,8 @@ class ReportAgent:
         results: List[ScanResult],
         analysis: Optional[MarketAnalysis] = None,
         strategy_name: str = "量化选股",
-        format: str = "html"
+        format: str = "html",
+        strategy_context: Optional[Dict[str, Any]] = None
     ) -> bool:
         """
         生成报告并发送邮件
@@ -225,6 +255,7 @@ class ReportAgent:
             analysis: 市场分析
             strategy_name: 策略名称
             format: 报告格式
+            strategy_context: 策略上下文（market_state, weights 等）
             
         Returns:
             发送是否成功
@@ -241,8 +272,13 @@ class ReportAgent:
         with open(report_path, 'r', encoding='utf-8') as f:
             html_content = f.read()
         
-        # 生成摘要
-        summary = self.generate_summary(results)
+        # 生成摘要（带策略上下文）
+        ctx = strategy_context or {}
+        summary = self.generate_summary(
+            results,
+            market_state=ctx.get("market_state"),
+            strategy_weights=ctx.get("weights")
+        )
         
         # 准备附件列表
         attachments = [md_path] if md_path else []

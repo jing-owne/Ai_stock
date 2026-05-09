@@ -72,7 +72,8 @@ def cmd_scan(args):
     if args.email:
         success = engine.report_agent.send_email(
             results=results,
-            strategy_name=strategy.name
+            strategy_name=strategy.name,
+            strategy_context=engine._last_strategy_context
         )
         if success:
             print("✅ 邮件发送成功")

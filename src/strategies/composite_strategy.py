@@ -76,6 +76,8 @@ class CompositeStrategy(BaseStrategy):
     def __init__(self):
         super().__init__()
         self.logger = logging.getLogger("AInvest.CompositeStrategy")
+        self._last_market_state: str = "volatile"
+        self._last_weights: Dict[str, float] = {}
 
     @property
     def name(self) -> str:
@@ -97,6 +99,10 @@ class CompositeStrategy(BaseStrategy):
 
         # 获取动态权重
         weights = self._get_weights(params, market_state)
+
+        # 保存到实例属性，供 StrategyAgent.execute_with_context() 读取
+        self._last_market_state = market_state
+        self._last_weights = dict(weights)
 
         # 执行各子策略
         sub_results = self._execute_sub_strategies(market_data, params)
@@ -233,14 +239,15 @@ class CompositeStrategy(BaseStrategy):
             score = round(volume_score + change_score + amount_score, 1)
 
             signals = []
+            sfx = "「放量」"
             if volume_ratio >= 3.0:
-                signals.append("巨量突破")
+                signals.append("巨量突破" + sfx)
             elif volume_ratio >= 2.0:
-                signals.append("温和放量")
+                signals.append("温和放量" + sfx)
             if stock.change_pct >= 5.0:
-                signals.append("强势上涨")
+                signals.append("强势上涨" + sfx)
             elif stock.change_pct >= 3.0:
-                signals.append("大幅上涨")
+                signals.append("大幅上涨" + sfx)
 
             results.append(ScanResult(
                 symbol=stock.symbol,
@@ -274,12 +281,13 @@ class CompositeStrategy(BaseStrategy):
             score = round(rank_score + amount_score + change_score, 1)
 
             signals = []
+            sfx = "「成交额」"
             if rank <= 5:
-                signals.append("成交额TOP5")
+                signals.append("成交额TOP5" + sfx)
             elif rank <= 10:
-                signals.append("成交活跃")
+                signals.append("成交活跃" + sfx)
             if stock.change_pct > 0:
-                signals.append("资金净流入")
+                signals.append("资金净流入" + sfx)
 
             results.append(ScanResult(
                 symbol=stock.symbol,
@@ -323,10 +331,11 @@ class CompositeStrategy(BaseStrategy):
                 continue
 
             signals = []
+            sfx = "「多因子」"
             if factors["volume"] >= 80:
-                signals.append("量能充沛")
+                signals.append("量能充沛" + sfx)
             if factors["price"] >= 80:
-                signals.append("涨幅领先")
+                signals.append("涨幅领先" + sfx)
 
             results.append(ScanResult(
                 symbol=stock.symbol,
@@ -366,12 +375,13 @@ class CompositeStrategy(BaseStrategy):
                 continue
 
             signals = []
+            sfx = "「AI技术」"
             if pattern_score >= 85:
-                signals.append("AI形态突破")
+                signals.append("AI形态突破" + sfx)
             elif pattern_score >= 75:
-                signals.append("AI形态良好")
+                signals.append("AI形态良好" + sfx)
             if trend_score >= 80:
-                signals.append("上升趋势确认")
+                signals.append("上升趋势确认" + sfx)
 
             results.append(ScanResult(
                 symbol=stock.symbol,
@@ -411,14 +421,15 @@ class CompositeStrategy(BaseStrategy):
             score = round(count_score + ratio_score + change_score + price_score, 1)
 
             signals = []
+            sfx = "「机构」"
             if inst_count >= 7:
-                signals.append("多家机构重仓")
+                signals.append("多家机构重仓" + sfx)
             elif inst_count >= 4:
-                signals.append("机构关注")
+                signals.append("机构关注" + sfx)
             if inst_change >= 5:
-                signals.append("机构大幅增持")
+                signals.append("机构大幅增持" + sfx)
             elif inst_change >= 2:
-                signals.append("机构温和增持")
+                signals.append("机构温和增持" + sfx)
 
             results.append(ScanResult(
                 symbol=stock.symbol,
