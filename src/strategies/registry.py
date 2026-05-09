@@ -9,6 +9,7 @@ from .momentum.turnover_rank import TurnoverRankStrategy
 from .momentum.multi_factor import MultiFactorStrategy
 from .technical.ai_technical import AITechnicalStrategy
 from .technical.institution import InstitutionStrategy
+from .composite_strategy import CompositeStrategy
 from ..core.types import StrategyType
 
 
@@ -36,6 +37,7 @@ class StrategyRegistry:
             StrategyType.MULTI_FACTOR: MultiFactorStrategy(),
             StrategyType.AI_TECHNICAL: AITechnicalStrategy(),
             StrategyType.INSTITUTION: InstitutionStrategy(),
+            StrategyType.COMPOSITE: CompositeStrategy(),  # 综合策略
         }
     
     def get_strategy(self, strategy_type: StrategyType) -> Optional[BaseStrategy]:

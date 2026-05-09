@@ -73,6 +73,17 @@ class StrategyAgent:
             return self.config.strategy.ai_technical
         elif strategy_type == StrategyType.INSTITUTION:
             return self.config.strategy.institution
+        elif strategy_type == StrategyType.COMPOSITE:
+            # 综合策略需要所有子策略的配置
+            return {
+                "volume_surge": self.config.strategy.volume_surge,
+                "turnover_rank": self.config.strategy.turnover_rank,
+                "multi_factor": self.config.strategy.multi_factor,
+                "ai_technical": self.config.strategy.ai_technical,
+                "institution": self.config.strategy.institution,
+                "composite_strategy": self.config.strategy.composite_strategy,
+                "fundamental_filter": self.config.strategy.fundamental_filter,
+            }
         return {}
     
     def backtest(
