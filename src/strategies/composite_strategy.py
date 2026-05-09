@@ -19,9 +19,9 @@ from typing import List, Dict, Any, Set
 import random
 import logging
 
-from ..base import BaseStrategy
-from ...core.types import StockData, ScanResult, StrategyType
-from ...core.config import Config
+from .base import BaseStrategy
+from ..core.types import StockData, ScanResult, StrategyType
+from ..core.config import Config
 
 
 class CompositeStrategy(BaseStrategy):

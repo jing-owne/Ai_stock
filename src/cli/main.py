@@ -184,7 +184,7 @@ def create_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument(
         "-s", "--strategy",
         default="volume_surge",
-        choices=["volume_surge", "turnover_rank", "multi_factor", "ai_technical", "institution"],
+        choices=["volume_surge", "turnover_rank", "multi_factor", "ai_technical", "institution", "composite"],
         help="选股策略"
     )
     scan_parser.add_argument("-l", "--limit", type=int, default=20, help="返回结果数量")
