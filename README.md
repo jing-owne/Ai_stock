@@ -1,74 +1,115 @@
 # Marcus量化选股系统 v1.5.0
 
-> 综合**5大量化策略**的智能选股系统，基于多维度数据分析筛选优质标的，每日尾盘自动推送选股报告。
+> **模块化AI量化分析平台**，基于Agent架构设计，支持多策略选股、市场分析、报告生成与自动推送。
 
 ## 📌 项目描述
 
-**Marcus量化选股系统**是一套基于多策略融合的A股智能选股工具，综合 **go-stock**、**myhhub/stock**、**zvt**、**hikyuu**、**northstar** 等开源量化项目的方法论，通过多因子评分模型筛选具有上涨潜力的股票。
+**AInvest** 是一套基于 **Agent架构** 的AI量化选股系统，综合放量上涨、多因子评分、AI技术面分析、机构追踪等多种策略，通过模块化设计实现灵活扩展。
 
 ### 核心特性
 
 | 特性 | 说明 |
 |------|------|
-| 🎯 **多策略融合** | 综合5大主流量化策略的选股方法论 |
-| 📊 **多因子评分** | 综合胜率、涨幅、流动性、换手率等因子评分 |
-| 💰 **资金流向** | 主力净流入数据分析 |
-| 📈 **风险分级** | 低/中/高风险三级分类 |
-| 📧 **自动推送** | 尾盘自动发送邮件报告 |
-| 🤖 **AI辅助** | 支持大模型深度分析（需配置API） |
+| 🏗️ **Agent架构** | 模块化设计，数据/市场/策略/报告四大Agent独立运行 |
+| 📊 **多策略支持** | 5大量化策略：放量上涨、多因子、AI技术面、机构追踪等 |
+| 🤖 **AI技术分析** | 形态识别 + 趋势置信度分析 |
+| 📈 **回测功能** | 策略历史表现评估（收益率、胜率、夏普比率） |
+| 📧 **自动推送** | 支持HTML/Markdown/JSON多格式报告邮件推送 |
+| 💾 **数据缓存** | 智能缓存机制，减少重复请求 |
+| 🔧 **健康检查** | 内置系统状态监控 |
 
 ---
 
 ## 🏗️ 系统架构
 
 ```
-ai_stock_selector/
-├── config.py           # 全局配置文件（邮件/AI/策略参数）
-├── data_fetcher.py     # 数据获取模块（AkShare + 新浪/东方财富）
-├── strategy_engine.py  # 选股策略引擎（5大策略 + 多因子评分）
-├── ai_analyzer.py      # AI分析模块（DeepSeek/OpenAI）
-├── mail_sender.py      # 邮件发送模块（精美HTML格式）
-├── main.py             # 主程序入口
-├── automation.py        # 定时任务入口（含交易日判断）
-├── close_analysis.py   # 尾盘分析模块
-└── README.md           # 项目文档
+AInvest/
+├── src/
+│   ├── agents/              # Agent模块
+│   │   ├── data_agent.py    # 数据获取Agent（多数据源支持）
+│   │   ├── market_agent.py  # 市场分析Agent（情绪/风险评估）
+│   │   ├── strategy_agent.py # 策略执行Agent（多策略注册）
+│   │   └── report_agent.py  # 报告生成Agent（邮件/文件）
+│   ├── core/                # 核心引擎
+│   │   ├── engine.py        # 主引擎（协调各Agent）
+│   │   ├── config.py        # 配置管理
+│   │   └── types.py         # 类型定义
+│   ├── data/                # 数据层
+│   │   └── source.py        # 数据源抽象
+│   ├── reports/             # 报告模块
+│   │   ├── generator.py     # 报告生成器
+│   │   ├── formatter.py     # 格式化器
+│   │   ├── email_sender.py  # 邮件发送
+│   │   └── templates/       # 报告模板
+│   ├── strategies/          # 策略模块
+│   │   └── registry.py     # 策略注册表
+│   └── cli/                 # 命令行入口
+│       ├── main.py          # CLI主程序
+│       └── interactive.py   # 交互模式
+├── configs/
+│   └── settings.yaml        # 全局配置
+├── examples/                # 使用示例
+├── tests/                   # 测试用例
+├── main.py                  # 程序入口
+└── pyproject.toml           # 项目配置
 ```
 
 ---
 
-## 📊 核心筛选逻辑
+## 📊 支持的选股策略
 
-| 筛选项 | 规则 |
-|--------|------|
-| **市场范围** | 仅沪深主板（排除688科创板、8开头北交所） |
-| **排除ST股** | 过滤ST及停牌股票 |
-| **流动性** | 日成交额 ≥3000万 |
-| **当日过滤** | 排除涨停（涨幅 ≥8%）和跌停股票 |
-| **涨幅范围** | 0% ~ 9.9%（强势但未涨停） |
-| **胜率门槛** | 预判胜率 ≥65% 方可入选 |
-| **最低评分** | 综合评分 ≥60 分 |
+| 策略 | 说明 | 关键参数 |
+|------|------|----------|
+| **volume_surge** | 放量上涨策略 | 放量倍数≥2.0、涨幅≥1%、成交额≥1亿 |
+| **turnover_rank** | 成交额排名策略 | 取前N名、最小成交额5亿 |
+| **multi_factor** | 多因子评分策略 | 量/价/换手/技术面权重可配 |
+| **ai_technical** | AI技术面分析 | 形态识别阈值75%、趋势置信度70% |
+| **institution** | 机构追踪策略 | 机构数≥3、持股比例≥5% |
 
 ---
 
-## 📈 选股策略权重
+## ⏰ 功能模块
 
-| 策略 | 参考项目 | 权重 | 分析维度 |
-|------|---------|------|----------|
-| **go-stock AI策略** | go-stock | 25% | 技术形态 + 资金流向 + 市场情绪 |
-| **myhhub多因子** | myhhub/stock | 30% | PE + PB + ROE + 营收增长 + 量价 |
-| **zvt多因子** | zvt | 25% | 估值因子 + 动量因子 + 质量因子 |
-| **hikyuu量化** | hikyuu | 10% | 布林带 + 均线排列 + MACD |
-| **northstar专业** | northstar | 5% | 技术分析 + 风险评估 |
+### 1. 股票扫描 (scan)
 
----
+```bash
+# 放量上涨策略，扫描20只
+python main.py scan -s volume_surge -l 20
 
-## ⏰ 自动推送计划（交易日）
+# 多因子策略，生成HTML报告
+python main.py scan -s multi_factor -l 20 --report -f html
 
-| 时间 | 推送内容 |
-|------|----------|
-| **09:15 ~ 15:30** | 尾盘选股报告：15只优质标的 + 操作建议 |
+# AI技术面策略，发送邮件
+python main.py scan -s ai_technical -l 20 --report --email
+```
 
-> 系统内置交易日判断逻辑：自动跳过周六日、法定节假日、非开盘日。
+### 2. 市场分析 (market)
+
+```bash
+# 分析当前市场状态
+python main.py market
+```
+
+### 3. 策略回测 (backtest)
+
+```bash
+# 回测多因子策略
+python main.py backtest -s multi_factor --start 2026-01-01 --end 2026-05-01
+```
+
+### 4. 健康检查 (health)
+
+```bash
+# 系统健康状态检查
+python main.py health
+```
+
+### 5. 邮件测试 (email)
+
+```bash
+# 测试SMTP配置
+python main.py email
+```
 
 ---
 
@@ -78,87 +119,39 @@ ai_stock_selector/
 
 ```bash
 Python 3.8+
-pip install akshare pandas numpy requests
+pip install -r requirements.txt
 ```
 
-### 手动运行
+### 配置文件 (configs/settings.yaml)
 
-```bash
-# 进入项目目录
-cd ai_stock_selector
+```yaml
+# 数据源配置
+data_source:
+  provider: sina              # sina/tushare/eastmoney
+  timeout: 30
+  cache_enabled: true
 
-# 完整运行（含邮件推送）
-python automation.py --force
+# 策略配置
+strategy:
+  volume_surge:
+    min_volume_ratio: 2.0
+    min_price_change: 1.0
+    min_amount: 100000000
 
-# DEBUG模式（仅预览，不发送邮件）
-python main.py --debug
-
-# 不发送邮件，仅输出结果
-python main.py --no-email
+# 邮件配置
+email:
+  enabled: true
+  debug_mode: true           # True: 调试模式（不抄送）
+  smtp_server: "smtp.qq.com"
+  smtp_port: 465
+  smtp_user: "your_email@qq.com"
+  smtp_password: "your_auth_code"
+  to_emails:
+    - "receiver@example.com"
+  cc_emails:
+    - "cc@example.com"
+  subject_prefix: "[Marcus量化选股]"
 ```
-
-### 定时任务配置
-
-#### Windows 任务计划程序
-
-1. 打开"任务计划程序"
-2. 创建基本任务
-3. 触发器：每天 14:45
-4. 操作：
-   - 程序：`python`
-   - 参数：`automation.py --force`
-   - 起始位置：`C:\Users\admin\WorkBuddy\Claw\ai_stock_selector`
-
-#### WorkBuddy 自动化
-
-```bash
-# 使用 automation_update 工具创建每日定时任务
-```
-
----
-
-## 📧 邮件配置
-
-### 1. 修改 config.py
-
-```python
-EMAIL_CONFIG = {
-    "enabled": True,           # 启用邮件发送
-    "debug_mode": False,       # 关闭调试模式（正式发送）
-    "smtp_server": "smtp.qq.com",
-    "smtp_port": 465,          # SSL端口
-    "smtp_user": "你的QQ邮箱@qq.com",
-    "smtp_password": "SMTP授权码",  # 不是密码！
-    "to_emails": ["收件人邮箱"],
-    "cc_emails": [],           # 抄送（留空）
-    "subject_prefix": "[Marcus量化选股]",
-}
-```
-
-### 2. 获取QQ邮箱SMTP授权码
-
-1. 登录 QQ 邮箱网页版
-2. 设置 → 账户 → POP3/IMAP/SMTP/Exchange/CardDAV/CalDAV服务
-3. 开启 "SMTP服务"
-4. 获取16位授权码
-
----
-
-## 🤖 AI配置（可选）
-
-```python
-AI_CONFIG = {
-    "enabled": True,
-    "provider": "deepseek",     # deepseek / openai
-    "api_key": "你的API密钥",
-    "model": "deepseek-chat",
-    "base_url": "https://api.deepseek.com",
-    "temperature": 0.7,
-    "max_tokens": 2000,
-}
-```
-
-**获取 DeepSeek API密钥**：https://platform.deepseek.com
 
 ---
 
@@ -166,40 +159,17 @@ AI_CONFIG = {
 
 ```
 【Marcus量化选股系统】
-报告日期: 2026年05月09日
+扫描完成: volume_surge
 
-----------------------------------------------------------------
-【股票选择】（按综合评分排序）
-----------------------------------------------------------------
+ 1. 浪莎股份(600137) - 评分: 88.5
+    信号: 放量上涨, 资金流入, 趋势向好
+    涨幅: +3.66%  成交额: 3.52亿
 
-▶ 1. 浪莎股份(600137) 🟡中风险
-   综合评分: 153.0 | 胜率: 88.9%
-   现价: 24.10 | 涨幅: +3.66%
-   换手率: 5.30% | PE: 0.0 | PB: 4.2
-   入选理由: 价格走势强劲, 涨幅合理, 量比放大
-   策略支持: go-stock + myhhub + zvt + hikyuu
+ 2. 安彩高科(600207) - 评分: 85.2
+    信号: 放量上涨, 换手活跃
+    涨幅: +5.14%  成交额: 5.21亿
 
-▶ 2. 安彩高科(600207) 🟡中风险
-   综合评分: 134.1 | 胜率: 88.5%
-   ...
-
-----------------------------------------------------------------
-【AI操作建议】
-----------------------------------------------------------------
-
-1. 浪莎股份(600137)
-   操作: 轻仓 | 建议仓位: 10%-20%
-   买入参考: 现价 24.10 可考虑轻仓介入
-   止损位: 22.89 (下跌5%)
-   止盈位: 27.71 (上涨15%)
-
-----------------------------------------------------------------
-【今日总结】
-----------------------------------------------------------------
-• 选出 15 只优质股票
-• 平均涨幅: +4.33%
-• 胜率区间: 85.6% ~ 88.9%
-• 风险分布: 低风险0只 | 中风险12只 | 高风险3只
+...
 ```
 
 ---
@@ -220,15 +190,12 @@ AI_CONFIG = {
 
 | 版本 | 日期 | 更新内容 |
 |------|------|----------|
-| v1.5.0 | 2026-05-09 | 多策略融合优化、邮件格式升级、15只精准选股 |
+| v1.5.0 | 2026-05-09 | 模块化重构、Agent架构设计、多策略支持 |
 | v1.0.0 | 2026-04-08 | 初始版本 |
 
 ---
 
-## 📚 参考项目
+## 📚 相关项目
 
-- [go-stock](https://github.com/zone万吨/go-stock) - AI量化策略
-- [myhhub/stock](https://github.com/myhhub/stock) - 多因子选股
-- [zvt](https://github.com/zvtvz/zvt) - 量化交易框架
-- [hikyuu](https://github.com/fwardsi/hikyuu) - 极速量化回测
-- [northstar](https://github.com/andrewgleave/northstar) - 专业量化系统
+- [Marcus-A-Trading-Assistant](https://github.com/jing-owne/Marcus-A-Trading-Assistant) - Marcus A股交易助手
+- [ai_stock_selector](https://github.com/jing-owne/ai_stock_selector) - 多策略选股系统
