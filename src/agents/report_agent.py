@@ -236,6 +236,7 @@ class ReportAgent:
         lines.append("• 建议分散持仓，单只仓位不超过总资金的20%")
         lines.append("• 必须设置止损位（建议-5%），严格执行")
         lines.append("• 量化模型有局限性，请结合个人判断决策")
+        lines.append("• 所有分析结果基于技术面量化模型，不保证准确性。用户应根据自身判断和风险承受能力做出独立投资决策。")
         
         return '\n'.join(lines)
     
