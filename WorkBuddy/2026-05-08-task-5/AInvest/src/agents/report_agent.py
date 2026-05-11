@@ -3,11 +3,12 @@
 负责生成各种格式的分析报告
 """
 import os
+import re
 import json
 import random
 import logging
 import urllib.request
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -59,49 +60,176 @@ def _fetch_daily_quote() -> str:
 
 
 # ============================================================
-# 财经动态（新浪财经滚动新闻）
+# 财经动态（多源聚合：新浪财经 + 金十数据 + 第一财经）
 # ============================================================
-def _fetch_market_news(num: int = 7) -> List[str]:
+
+def _http_get(url: str, headers: Dict[str, str], timeout: int = 8) -> str:
+    """通用 HTTP GET，返回原始字符串，失败抛异常"""
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read().decode("utf-8", errors="replace")
+
+
+def _news_from_sina(today_str: str) -> List[Tuple[str, str, str]]:
     """
-    获取今日财经快讯（新浪财经滚动新闻）
-    返回格式：["标题  时间", ...]，失败时返回空列表
+    新浪财经滚动新闻
+    返回 List[(time_hhmm, title, source_tag)]
     """
     try:
         url = (
             "https://feed.mix.sina.com.cn/api/roll/get"
-            "?pageid=153&lid=2516&k=&num=20&page=1&r=0.1"
+            "?pageid=153&lid=2516&k=&num=30&page=1&r=0.1"
         )
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": "Mozilla/5.0",
-                "Referer": "https://finance.sina.com.cn"
-            }
-        )
-        with urllib.request.urlopen(req, timeout=8) as r:
-            data = json.loads(r.read().decode("utf-8"))
-
-        items = data.get("result", {}).get("data", [])
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        results = []
+        raw = _http_get(url, {
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://finance.sina.com.cn",
+        })
+        items = json.loads(raw).get("result", {}).get("data", [])
+        result = []
         for item in items:
             title = (item.get("title") or "").strip()
             ctime = item.get("ctime", 0)
-            # 转换时间戳
             try:
                 dt = datetime.fromtimestamp(int(ctime))
                 time_str = dt.strftime("%H:%M")
                 date_str = dt.strftime("%Y-%m-%d")
             except Exception:
-                time_str = "--:--"
-                date_str = ""
+                continue
             if title and date_str == today_str:
-                results.append(f"{time_str}  {title}")
-            if len(results) >= num:
-                break
-        return results
+                result.append((time_str, title, "新浪"))
+        return result
     except Exception:
         return []
+
+
+def _news_from_jin10(today_str: str) -> List[Tuple[str, str, str]]:
+    """
+    金十数据 Flash 快讯（flash_newest.js）
+    过滤今日、content 非空、优先 important=1
+    返回 List[(time_hhmm, content, source_tag)]
+    """
+    try:
+        url = "https://www.jin10.com/flash_newest.js?rnd=0.1"
+        raw = _http_get(url, {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "Referer": "https://www.jin10.com/",
+        })
+        # 格式：var newest = [...]
+        json_str = re.sub(r"^var\s+newest\s*=\s*", "", raw.strip())
+        if json_str.endswith(";"):
+            json_str = json_str[:-1]
+        items = json.loads(json_str)
+        result = []
+        for item in items:
+            time_raw = item.get("time", "")  # "2026-05-11 10:32:06"
+            content = (item.get("data", {}).get("content") or "").strip()
+            title = (item.get("data", {}).get("title") or "").strip()
+            text = title or content
+            if not text:
+                continue
+            # 清理 HTML 标签（如 <b>、</b>）
+            text = re.sub(r"<[^>]+>", "", text).strip()
+            if not text:
+                continue
+            try:
+                dt = datetime.strptime(time_raw[:19], "%Y-%m-%d %H:%M:%S")
+                time_str = dt.strftime("%H:%M")
+                date_str = dt.strftime("%Y-%m-%d")
+            except Exception:
+                continue
+            if date_str != today_str:
+                continue
+            # 跳过纯英文条目（一般是国际市场英文数据播报）
+            chinese_chars = len(re.findall(r"[\u4e00-\u9fa5]", text))
+            if chinese_chars < 3:
+                continue
+            # 跳过"图示"类图片条目
+            if "金十图示" in text or "金十图解" in text:
+                continue
+            result.append((time_str, text, "金十"))
+        return result
+    except Exception:
+        return []
+
+
+def _news_from_yicai(today_str: str) -> List[Tuple[str, str, str]]:
+    """
+    第一财经快讯（yicai.com brieflist API）
+    返回 List[(time_hhmm, title, source_tag)]
+    """
+    try:
+        url = "https://www.yicai.com/api/ajax/getbrieflist?page=1&pagesize=20&id=0"
+        raw = _http_get(url, {
+            "accept": "*/*",
+            "accept-language": "zh-CN,zh;q=0.9",
+            "referer": "https://www.yicai.com/brief/",
+            "user-agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0"
+            ),
+            "x-requested-with": "XMLHttpRequest",
+        })
+        items = json.loads(raw)
+        result = []
+        for item in items:
+            create_date = item.get("CreateDate", "")
+            title = (item.get("LiveTitle") or item.get("NewsTitle") or "").strip()
+            if not title:
+                continue
+            try:
+                dt = datetime.strptime(create_date[:19], "%Y-%m-%dT%H:%M:%S")
+                time_str = dt.strftime("%H:%M")
+                date_str = dt.strftime("%Y-%m-%d")
+            except Exception:
+                continue
+            if date_str != today_str:
+                continue
+            result.append((time_str, title, "一财"))
+        return result
+    except Exception:
+        return []
+
+
+def _fetch_market_news(num: int = 10) -> List[str]:
+    """
+    获取今日财经快讯（多源聚合：新浪财经 + 金十数据 + 第一财经）
+
+    策略：
+    - 三个来源并行（顺序）抓取，合并去重（按标题相似度简单去重）
+    - 按时间倒序排列（最新在前）
+    - 取前 num 条
+    返回格式：["HH:MM [来源] 标题", ...]
+    """
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    # 三源抓取
+    sina_news = _news_from_sina(today_str)
+    jin10_news = _news_from_jin10(today_str)
+    yicai_news = _news_from_yicai(today_str)
+
+    # 合并
+    all_news: List[Tuple[str, str, str]] = []
+    all_news.extend(sina_news)
+    all_news.extend(jin10_news)
+    all_news.extend(yicai_news)
+
+    # 按时间倒序
+    all_news.sort(key=lambda x: x[0], reverse=True)
+
+    # 简单去重：标题前20字相同则视为重复，保留第一条（时间最新）
+    seen_prefixes: set = set()
+    deduped: List[str] = []
+    for time_str, title, source in all_news:
+        prefix = title[:20]
+        if prefix in seen_prefixes:
+            continue
+        seen_prefixes.add(prefix)
+        deduped.append(f"{time_str} [{source}] {title}")
+        if len(deduped) >= num:
+            break
+
+    return deduped
 
 
 # ============================================================
@@ -331,9 +459,9 @@ class ReportAgent:
         # ── ③ 财经动态 ─────────────────────────────────
         lines.append("")
         lines.append("━" * 60)
-        lines.append("【财经动态】（今日要闻）")
+        lines.append("【财经动态】（今日要闻 · 新浪/金十/一财三源聚合）")
         lines.append("━" * 60)
-        news_list = _fetch_market_news(num=7)
+        news_list = _fetch_market_news(num=10)
         if news_list:
             for news in news_list:
                 lines.append(f"• {news}")
