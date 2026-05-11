@@ -142,7 +142,7 @@ class ReportAgent:
         # ── 选股结果 ─────────────────────────────────
         lines.append("")
         lines.append("━" * 60)
-        lines.append("【股票选择】（按综合评分降序排列）")
+        lines.append("【股票选择】（Top 15 按综合评分降序排列）")
         lines.append("━" * 60)
         
         if not results:
@@ -159,15 +159,11 @@ class ReportAgent:
             lines.append(f"• 总成交额: {total_amount/1e8:.2f}亿")
             lines.append("")
             
-            # Top 10 详细列表（多行展示信号）
-            lines.append("▶ Top 10 推荐股票")
+            # Top 15 详细列表（卡片式多行展示，含命中策略）
+            lines.append("▶ Top 15 推荐股票")
             lines.append("")
             
-            # 表头
-            lines.append("序号 | 股票名称 | 代码 | 评分 | 涨幅 | 成交额")
-            lines.append("--- | --- | --- | --- | --- | ---")
-            
-            for i, result in enumerate(results[:10], 1):
+            for i, result in enumerate(results[:15], 1):
                 name = result.name
                 symbol = result.symbol
                 score = result.score
@@ -177,29 +173,22 @@ class ReportAgent:
                     amount = result.data.amount
                     amount_str = f"{amount/1e8:.2f}亿" if amount >= 1e8 else f"{amount/1e4:.0f}万"
                     change_str = f"{change_pct:+.2f}%"
+                    price_str = f"{result.data.close:.2f}元"
                 else:
                     amount_str = "N/A"
                     change_str = "N/A"
+                    price_str = "N/A"
                 
-                lines.append(f"{i} | {name} | {symbol} | {score:.1f} | {change_str} | {amount_str}")
-            
-            # 入选信号说明（单独列在表格下方）
-            lines.append("")
-            lines.append("▶ 入选信号说明")
-            all_signals = []
-            for result in results[:10]:
-                all_signals.extend(result.signals)
-            # 统计各信号出现频次
-            signal_count: Dict[str, int] = {}
-            for s in all_signals:
-                signal_count[s] = signal_count.get(s, 0) + 1
-            top_signals = sorted(signal_count.items(), key=lambda x: -x[1])[:8]
-            for sig, cnt in top_signals:
-                lines.append(f"  • {sig}（命中 {cnt} 次）")
-            
-            if len(results) > 10:
+                # 每只股票独立一块，用 ▶ 开头（会被邮件渲染为高亮卡片）
+                lines.append(f"▶ {i}. {name}（{symbol}）  评分：{score:.1f}")
+                lines.append(f"   涨幅：{change_str}   成交额：{amount_str}   现价：{price_str}")
+                if result.signals:
+                    sig_str = " / ".join(result.signals[:4])
+                    lines.append(f"   命中策略：{sig_str}")
                 lines.append("")
-                lines.append(f"• 还有 {len(results) - 10} 只备选股票（详见附件）")
+            
+            if len(results) > 15:
+                lines.append(f"• 还有 {len(results) - 15} 只备选股票（详见附件）")
         
         # ── 操作建议 ─────────────────────────────────
         lines.append("")
@@ -208,14 +197,14 @@ class ReportAgent:
         lines.append("━" * 60)
         
         if results:
-            for i, result in enumerate(results[:3], 1):
+            for i, result in enumerate(results[:5], 1):
                 current_price = result.data.close if result.data else 0
                 entry_price = current_price * 0.98
                 stop_loss = current_price * 0.95
                 take_profit = current_price * 1.08
                 
                 lines.append("")
-                lines.append(f"▶ {i}. {result.name}({result.symbol})")
+                lines.append(f"▶ {i}. {result.name}（{result.symbol}）")
                 lines.append(f"   当前价格: {current_price:.2f}元")
                 lines.append(f"   买入参考: {entry_price:.2f}元（-2%）")
                 lines.append(f"   止损位:   {stop_loss:.2f}元（-5%）")
@@ -224,7 +213,7 @@ class ReportAgent:
                 # 展示该股所有入选信号
                 if result.signals:
                     sig_lines = " / ".join(result.signals)
-                    lines.append(f"   入选信号: {sig_lines}")
+                    lines.append(f"   命中策略: {sig_lines}")
         
         # ── 风险提示 ─────────────────────────────────
         lines.append("")
