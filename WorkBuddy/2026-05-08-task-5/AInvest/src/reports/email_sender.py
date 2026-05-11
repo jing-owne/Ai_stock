@@ -161,11 +161,20 @@ body{{
 .amt{{color:#2980b9;font-weight:600}}
 /* 底部 */
 .ftr{{
-  background:#f8f9fb;
-  border-top:1px solid #e0e6ed;
-  padding:8px 14px;
+  background:#f0f2f5;
+  border-top:1px solid #d0d7de;
+  padding:10px 14px 12px;
   text-align:center;
-  font-size:11px;color:#999;
+}}
+.ftr-risk{{
+  font-size:11px;color:#888;
+  line-height:1.6;margin-bottom:5px;
+  border:1px solid #dde3ea;border-radius:4px;
+  background:#f8f9fb;padding:6px 10px;
+  text-align:left;
+}}
+.ftr-copy{{
+  font-size:11px;color:#bbb;
 }}
 </style>
 </head>
@@ -178,7 +187,10 @@ body{{
   <div class="body">
 {content_html}
   </div>
-  <div class="ftr">本报告由 Marcus量化选股小助手 自动生成 · 仅供参考，不构成投资建议</div>
+  <div class="ftr">
+    <div class="ftr-risk">风险提示：以上内容仅供参考，不构成投资建议。股市有风险，投资需谨慎，请独立判断。建议分散持仓，严格执行止损（-5%），量化模型不能替代基本面分析与个人判断。</div>
+    <div class="ftr-copy">本报告由 Marcus量化选股小助手 自动生成 · 请勿转发</div>
+  </div>
 </div>
 </body>
 </html>"""
@@ -371,28 +383,9 @@ class EmailSender:
         Returns:
             发送是否成功
         """
-        # 构建邮件主题（避免 subject_prefix 与 strategy_name 内容重叠）
+        # 构建邮件主题：固定格式
         today = datetime.now().strftime('%Y-%m-%d')
-        prefix = self.config.subject_prefix.strip()
-        # strategy_name 可能是枚举 .name（全大写下划线），转换为可读中文
-        _strategy_name_map = {
-            "VOLUME_SURGE": "放量上涨",
-            "TURNOVER_RANK": "成交额排名",
-            "MULTI_FACTOR": "多因子",
-            "AI_TECHNICAL": "AI技术面",
-            "INSTITUTION": "机构追踪",
-            "volume_surge": "放量上涨",
-            "turnover_rank": "成交额排名",
-            "multi_factor": "多因子",
-            "ai_technical": "AI技术面",
-            "institution": "机构追踪",
-        }
-        display_name = _strategy_name_map.get(strategy_name, strategy_name)
-        # 若 display_name 已包含在 prefix 中，则不重复追加
-        if display_name and display_name not in prefix:
-            subject = f"{prefix} {today} {display_name}选股报告"
-        else:
-            subject = f"{prefix} {today} 选股报告"
+        subject = f"[Marcus量化选股小助手] {today} 动态策略报告"
         
         # 使用配置中的收件人
         to_emails = self.config.to_emails if self.config.to_emails else []
@@ -403,8 +396,8 @@ class EmailSender:
         self.logger.info(f"  收件人: {to_emails}")
         self.logger.info(f"  附件: {attachments}")
         
-        # 使用格式化的HTML模板
-        formatted_html = format_email_html(results_summary, f"Marcus量化选股 - {strategy_name}策略")
+        # 使用格式化的HTML模板（标题固定为"Marcus量化选股小助手"）
+        formatted_html = format_email_html(results_summary, "Marcus量化选股小助手")
         
         return self.send(
             subject=subject,

@@ -225,6 +225,47 @@ def _news_from_yicai(today_str: str) -> List[Tuple[str, str, str]]:
         return []
 
 
+def _is_relevant_news(title: str) -> bool:
+    """
+    过滤新闻：保留股票、财经、公司相关；过滤国际政治、战事等无关内容
+    返回 True 表示保留，False 表示过滤掉
+    """
+    # 过滤关键词（国际政治/战事/外交/体育/娱乐等）
+    _filter_keywords = [
+        # 国际/外交
+        "美伊", "伊朗", "以色列", "俄罗斯", "乌克兰", "朝鲜", "美联储",
+        "白宫", "拜登", "特朗普", "欧盟", "北约", "联合国",
+        "巴以", "加沙", "哈马斯", "胡塞", "中东", "叙利亚",
+        "印巴", "印度", "巴基斯坦",
+        # 体育/娱乐
+        "奥运", "世界杯", "NBA", "足球", "篮球", "演唱会", "电影",
+        # 其他无关
+        "地震", "台风", "洪水", "疫情",
+    ]
+    for kw in _filter_keywords:
+        if kw in title:
+            return False
+
+    # 保留关键词（只要含有以下词之一就保留）
+    _keep_keywords = [
+        "股", "A股", "港股", "上证", "深证", "创业板", "科创板",
+        "基金", "债券", "可转债", "打新", "新股",
+        "公司", "企业", "集团", "股份", "科技", "银行", "保险",
+        "券商", "证券", "资本", "投资", "并购", "重组", "定增",
+        "财经", "金融", "经济", "货币", "利率", "通胀", "CPI", "PMI",
+        "央行", "人民银行", "证监会", "交易所",
+        "涨停", "跌停", "涨幅", "跌幅", "成交",
+        "营收", "净利", "利润", "业绩", "财报",
+        "指数", "板块", "题材", "龙头",
+    ]
+    for kw in _keep_keywords:
+        if kw in title:
+            return True
+
+    # 默认保留（避免过度过滤）
+    return True
+
+
 def _fetch_market_news(num: int = 10) -> List[str]:
     """
     获取今日财经快讯（多源聚合：新浪财经 + 金十数据 + 第一财经）
@@ -259,7 +300,10 @@ def _fetch_market_news(num: int = 10) -> List[str]:
         if prefix in seen_prefixes:
             continue
         seen_prefixes.add(prefix)
-        deduped.append(f"[{source}] {title}")
+        # 过滤无关新闻
+        if not _is_relevant_news(title):
+            continue
+        deduped.append(title)
         if len(deduped) >= num:
             break
 
@@ -477,11 +521,8 @@ class ReportAgent:
         weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
         weekday = weekdays[datetime.now().weekday()]
 
-        # ── ① 报告标题 ─────────────────────────────────
-        lines.append("=" * 60)
-        lines.append("【Marcus量化选股小助手】")
+        # ── ① 报告标题（仅保留日期行，大标题在HTML header中显示）
         lines.append(f"报告日期：{today}（{weekday}）  生成时间：{now}")
-        lines.append("=" * 60)
 
         # ── ② 每日一言 ─────────────────────────────────
         lines.append("")
@@ -493,7 +534,7 @@ class ReportAgent:
         # ── ③ 财经动态 ─────────────────────────────────
         lines.append("")
         lines.append("━" * 60)
-        lines.append("【财经动态】（今日要闻 · 新浪/金十/一财三源聚合）")
+        lines.append("【财经动态】")
         lines.append("━" * 60)
         news_list = _fetch_market_news(num=10)
         if news_list:
@@ -671,21 +712,7 @@ class ReportAgent:
             lines.append("• 今日暂无符合条件的候选股票，建议观望等待机会")
             lines.append("• 可适当关注指数表现，把握整体市场节奏")
 
-        # ── ⑨ 风险提示 ─────────────────────────────────
         lines.append("")
-        lines.append("=" * 60)
-        lines.append("【风险提示】")
-        lines.append("=" * 60)
-        lines.append("• 以上内容仅供参考，不构成投资建议")
-        lines.append("• 股市有风险，投资需谨慎，请独立判断")
-        lines.append("• 建议分散持仓，单只仓位不超过总资金的 20%")
-        lines.append("• 必须设置止损位（建议 -5%），严格执行，避免重大损失")
-        lines.append("• 量化模型有局限性，不能替代基本面分析与个人判断")
-        lines.append("• 所有分析结果基于技术面量化模型，不保证准确性")
-        lines.append("• 用户应根据自身判断和风险承受能力做出独立投资决策")
-
-        lines.append("")
-        lines.append("=" * 60)
 
         return '\n'.join(lines)
     
