@@ -193,14 +193,12 @@ class ReportAgent:
                 change_str = f"{change_pct:+.2f}%"
                 sig_str = " / ".join(result.signals[:3]) if result.signals else "-"
 
-                # 第1行：股票名称
-                lines.append(f"▶ {i}. {result.name}（{result.symbol}）评分：{result.score:.1f} | 预估胜率：{win_rate:.1f}%")
-                # 第2行：现价 + 涨跌幅
-                lines.append(f"   现价：{current_price:.2f}元 ({change_str})")
-                # 第3行：建议买入价 | 止损 | 止盈
-                lines.append(f"   建议买入价：{suggest_buy_price:.2f}元 | 止损：{stop_loss:.2f}元 | 止盈：{take_profit:.2f}元")
-                # 第4行：命中策略
-                lines.append(f"   命中策略：{sig_str}")
+                # 第1行：现价 + 涨跌幅 + 建议买入价（同行）
+                lines.append(f"▶ {i}. {result.name}（{result.symbol}） 现价：{current_price:.2f}元 ({change_str})   建议买入：{suggest_buy_price:.2f}元")
+                # 第2行：止盈止损价（同行）
+                lines.append(f"   止损：{stop_loss:.2f}元（-5%）  止盈：{take_profit:.2f}元（+8%）")
+                # 第3行：命中策略（单独一行）
+                lines.append(f"   命中策略：{sig_str}  |  预估胜率：<strong style='color:#DC2626;font-weight:bold;'>{win_rate:.1f}%</strong>")
                 lines.append("")
 
         lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -219,8 +217,7 @@ class ReportAgent:
                 amount_str = f"{amount/1e8:.2f}亿" if amount >= 1e8 else f"{amount/1e4:.0f}万" if amount > 0 else "N/A"
                 sig_str = " / ".join(result.signals[:3]) if result.signals else "-"
 
-                lines.append(f"▶ {i}. {result.name}（{result.symbol}）评分：{result.score:.1f}")
-                lines.append(f"   现价：{current_price:.2f}元 | 涨跌幅：{change_str} | 成交额：{amount_str}")
+                lines.append(f"▶ {i}. {result.name}（{result.symbol}）  现价：{current_price:.2f}元 ({change_str})  成交额：{amount_str}")
                 lines.append(f"   命中策略：{sig_str}")
                 lines.append("")
 
@@ -237,7 +234,6 @@ class ReportAgent:
             top3 = results[:3]
             top3_names = "、".join([f"{r.name}({r.score:.1f}分)" for r in top3])
 
-            lines.append(f"▶ 今日综合策略共筛选出 {len(results[:15])} 只优质股票")
             lines.append(f"▶ 平均评分：{avg_score:.1f}分，上涨家数：{up_count} 只")
             lines.append(f"▶ 重点推荐：{top3_names}")
             lines.append(f"▶ 建议：逢低关注前3只股票，设置好止损位")
