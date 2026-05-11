@@ -7,8 +7,8 @@ import json
 import random
 import logging
 import urllib.request
-from typing import List, Optional
-from datetime import datetime
+from typing import List, Optional, Dict, Any
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from ..core.types import ScanResult, MarketAnalysis
@@ -17,7 +17,9 @@ from ..reports.generator import ReportGenerator
 from ..reports.email_sender import EmailSender
 
 
-# 每日一言本地备用句库
+# ============================================================
+# 每日一言
+# ============================================================
 _LOCAL_QUOTES = [
     ("越努力，越幸运。", "佚名"),
     ("不要等待机会，而要创造机会。", "林肯"),
@@ -38,9 +40,7 @@ _LOCAL_QUOTES = [
 
 
 def _fetch_daily_quote() -> str:
-    """
-    获取每日一言，优先从 hitokoto API 拉取，失败时降级到本地备用句库
-    """
+    """获取每日一言，优先从 hitokoto API 拉取，失败时降级到本地备用句库"""
     try:
         req = urllib.request.Request(
             "https://v1.hitokoto.cn/?encode=json",
@@ -54,9 +54,161 @@ def _fetch_daily_quote() -> str:
                 return f"「{text}」" + (f"  —— {source}" if source else "")
     except Exception:
         pass
-    # 降级：本地备用
     text, source = random.choice(_LOCAL_QUOTES)
     return f"「{text}」  —— {source}"
+
+
+# ============================================================
+# 财经动态（新浪财经滚动新闻）
+# ============================================================
+def _fetch_market_news(num: int = 7) -> List[str]:
+    """
+    获取今日财经快讯（新浪财经滚动新闻）
+    返回格式：["标题  时间", ...]，失败时返回空列表
+    """
+    try:
+        url = (
+            "https://feed.mix.sina.com.cn/api/roll/get"
+            "?pageid=153&lid=2516&k=&num=20&page=1&r=0.1"
+        )
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "Referer": "https://finance.sina.com.cn"
+            }
+        )
+        with urllib.request.urlopen(req, timeout=8) as r:
+            data = json.loads(r.read().decode("utf-8"))
+
+        items = data.get("result", {}).get("data", [])
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        results = []
+        for item in items:
+            title = (item.get("title") or "").strip()
+            ctime = item.get("ctime", 0)
+            # 转换时间戳
+            try:
+                dt = datetime.fromtimestamp(int(ctime))
+                time_str = dt.strftime("%H:%M")
+                date_str = dt.strftime("%Y-%m-%d")
+            except Exception:
+                time_str = "--:--"
+                date_str = ""
+            if title and date_str == today_str:
+                results.append(f"{time_str}  {title}")
+            if len(results) >= num:
+                break
+        return results
+    except Exception:
+        return []
+
+
+# ============================================================
+# 打新日历（新股 + 新债）
+# ============================================================
+def _fetch_ipo_calendar(days_ahead: int = 14) -> Dict[str, List[Dict]]:
+    """
+    获取未来 days_ahead 天内的新股申购日历
+    数据源：东方财富 RPTA_APP_IPOAPPLY
+    返回 {"ipo": [...], "bond": [...]}
+    """
+    result = {"ipo": [], "bond": []}
+    today = datetime.now().date()
+    deadline = today + timedelta(days=days_ahead)
+
+    # ---- 新股 ----
+    try:
+        url = (
+            "https://datacenter-web.eastmoney.com/api/data/v1/get"
+            "?reportName=RPTA_APP_IPOAPPLY&columns=ALL"
+            "&pageNumber=1&pageSize=30"
+            "&sortTypes=-1&sortColumns=APPLY_DATE"
+            "&source=WEB&client=WEB"
+        )
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        items = data.get("result", {}).get("data") or []
+        for item in items:
+            apply_date_raw = item.get("APPLY_DATE") or ""
+            apply_date = apply_date_raw[:10] if apply_date_raw else ""
+            try:
+                ad = datetime.strptime(apply_date, "%Y-%m-%d").date()
+            except Exception:
+                continue
+            if ad < today or ad > deadline:
+                continue
+            name = item.get("SECURITY_NAME_ABBR") or item.get("SECURITY_CODE") or "未知"
+            code = item.get("APPLY_CODE") or item.get("SECURITY_CODE") or "--"
+            market = item.get("MARKET_TYPE_NEW") or item.get("TRADE_MARKET") or "--"
+            issue_price = item.get("ISSUE_PRICE")
+            price_str = f"{issue_price:.2f}元" if issue_price else "待定"
+            result["ipo"].append({
+                "date": apply_date,
+                "name": name,
+                "apply_code": code,
+                "market": market,
+                "price": price_str,
+            })
+    except Exception:
+        pass
+
+    # ---- 新债（可转债）：遍历所有页，找近期上市/发行的 ----
+    try:
+        all_bonds = []
+        for page in range(1, 7):
+            url = (
+                "https://datacenter-web.eastmoney.com/api/data/v1/get"
+                "?reportName=RPT_BOND_CB_LIST"
+                "&columns=SECURITY_CODE,SECURITY_NAME_ABBR,VALUE_DATE,LISTING_DATE,BOND_START_DATE,ISSUE_PRICE,RATING"
+                f"&pageNumber={page}&pageSize=200&source=WEB&client=WEB"
+            )
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                data = json.loads(r.read().decode("utf-8"))
+            items = data.get("result", {}).get("data") or []
+            all_bonds.extend(items)
+
+        # 找申购/发行日在今天~deadline范围内的
+        for item in all_bonds:
+            # BOND_START_DATE 是申购起始日，VALUE_DATE 是发行日，优先用前者
+            date_raw = item.get("BOND_START_DATE") or item.get("VALUE_DATE") or ""
+            apply_date = date_raw[:10] if date_raw else ""
+            try:
+                ad = datetime.strptime(apply_date, "%Y-%m-%d").date()
+            except Exception:
+                continue
+            # 向前回看7天（可能今天还在申购中）
+            if ad < today - timedelta(days=2) or ad > deadline:
+                continue
+            name = item.get("SECURITY_NAME_ABBR") or "--"
+            code = item.get("SECURITY_CODE") or "--"
+            rating = item.get("RATING") or "--"
+            issue_price = item.get("ISSUE_PRICE")
+            price_str = f"{issue_price:.2f}元" if issue_price else "100元"
+            listing_raw = item.get("LISTING_DATE") or ""
+            listing = listing_raw[:10] if listing_raw else "待定"
+            result["bond"].append({
+                "date": apply_date,
+                "name": name,
+                "code": code,
+                "rating": rating,
+                "price": price_str,
+                "listing": listing,
+            })
+        # 去重（SECURITY_NAME_ABBR）并按日期排序
+        seen = set()
+        deduped = []
+        for b in sorted(result["bond"], key=lambda x: x["date"]):
+            if b["name"] not in seen:
+                seen.add(b["name"])
+                deduped.append(b)
+        result["bond"] = deduped
+    except Exception:
+        pass
+
+    return result
 
 
 class ReportAgent:
@@ -82,7 +234,8 @@ class ReportAgent:
         results: List[ScanResult],
         analysis: Optional[MarketAnalysis] = None,
         format: str = "html",
-        template: Optional[str] = None
+        template: Optional[str] = None,
+        strategy_context: Optional[Dict[str, Any]] = None
     ) -> str:
         """
         生成分析报告
@@ -92,6 +245,7 @@ class ReportAgent:
             analysis: 市场分析
             format: 报告格式 (html/markdown/json)
             template: 模板名称
+            strategy_context: 策略上下文（含子策略 Top 10，用于 MD 附件）
             
         Returns:
             报告文件路径
@@ -107,7 +261,7 @@ class ReportAgent:
         )
         
         # 生成报告
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%y-%m-%d %H-%M")
         
         if format == "html":
             filename = f"scan_report_{timestamp}.html"
@@ -124,7 +278,7 @@ class ReportAgent:
         content = generator.generate(
             results=results,
             analysis=analysis,
-            format=format
+            format=format,
         )
         
         # 写入文件
@@ -135,133 +289,254 @@ class ReportAgent:
         
         return str(output_path)
     
-    def generate_summary(self, results: List[ScanResult]) -> str:
+    def generate_summary(
+        self,
+        results: List[ScanResult],
+        market_state: Optional[str] = None,
+        strategy_weights: Optional[Dict[str, float]] = None
+    ) -> str:
         """
         生成丰富的文本摘要（用于邮件发送）
-        
-        参考参考项目的邮件格式
+
+        模块顺序：
+          ① 报告标题
+          ② 每日一言
+          ③ 财经动态
+          ④ 打新日历（新股 & 新债）
+          ⑤ 策略配置
+          ⑥ 股票选择
+          ⑦ 操作建议
+          ⑧ 今日总结
+          ⑨ 风险提示
         """
-        from datetime import datetime
-        
         lines = []
         today = datetime.now().strftime('%Y年%m月%d日')
-        now = datetime.now().strftime('%H:%M:%S')
-        
-        # ==================== 报告标题 ====================
+        now = datetime.now().strftime('%H:%M')
+        weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+        weekday = weekdays[datetime.now().weekday()]
+
+        # ── ① 报告标题 ─────────────────────────────────
         lines.append("=" * 60)
         lines.append("【Marcus量化选股小助手】")
-        lines.append(f"报告日期: {today} {now}")
+        lines.append(f"报告日期：{today}（{weekday}）  生成时间：{now}")
         lines.append("=" * 60)
-        
-        # ==================== 每日一言 ====================
+
+        # ── ② 每日一言 ─────────────────────────────────
         lines.append("")
-        lines.append("-" * 60)
+        lines.append("━" * 60)
         lines.append("【每日一言】")
-        lines.append("-" * 60)
+        lines.append("━" * 60)
         lines.append(_fetch_daily_quote())
-        
-        # ==================== 策略说明 ====================
+
+        # ── ③ 财经动态 ─────────────────────────────────
         lines.append("")
-        lines.append("-" * 60)
-        lines.append("【策略说明】")
-        lines.append("-" * 60)
-        lines.append("• 放量上涨策略: 基于成交量突增筛选强势股票")
-        lines.append("• 评分机制: 综合涨幅、成交额、量比等因素")
-        lines.append("• 筛选条件: 放量倍数≥2.0, 涨幅≥1%, 成交额≥1亿")
-        
-        # ==================== 选股结果 ====================
+        lines.append("━" * 60)
+        lines.append("【财经动态】（今日要闻）")
+        lines.append("━" * 60)
+        news_list = _fetch_market_news(num=7)
+        if news_list:
+            for news in news_list:
+                lines.append(f"• {news}")
+        else:
+            lines.append("• 暂无今日财经快讯（数据获取失败）")
+
+        # ── ④ 打新日历 ─────────────────────────────────
         lines.append("")
-        lines.append("-" * 60)
-        lines.append("【股票选择】（按综合评分排序）")
-        lines.append("-" * 60)
-        
+        lines.append("━" * 60)
+        lines.append("【打新日历】（近14天新股 & 新债申购）")
+        lines.append("━" * 60)
+        calendar = _fetch_ipo_calendar(days_ahead=14)
+        ipo_list = calendar.get("ipo", [])
+        bond_list = calendar.get("bond", [])
+
+        # 新股
+        lines.append("")
+        lines.append("▶ 新股申购")
+        if ipo_list:
+            lines.append("申购日期   股票名称         申购代码   发行价   市场")
+            lines.append("-" * 60)
+            for item in sorted(ipo_list, key=lambda x: x["date"]):
+                lines.append(
+                    f"{item['date']}  {item['name']:<12}  {item['apply_code']}   "
+                    f"{item['price']:<8} {item['market']}"
+                )
+        else:
+            lines.append("• 近14天内暂无新股申购安排")
+
+        # 新债
+        lines.append("")
+        lines.append("▶ 可转债申购（新债）")
+        if bond_list:
+            lines.append("发行/申购日  债券名称         代码      评级   发行价   上市日")
+            lines.append("-" * 60)
+            for item in sorted(bond_list, key=lambda x: x["date"]):
+                lines.append(
+                    f"{item['date']}  {item['name']:<12}  {item['code']}  "
+                    f"{item['rating']:<5} {item['price']:<8} {item['listing']}"
+                )
+        else:
+            lines.append("• 近14天内暂无可转债申购安排")
+
+        # ── ⑤ 策略配置 ─────────────────────────────────
+        state_map = {
+            "trend_up": "上涨趋势",
+            "trend_down": "下跌趋势",
+            "volatile": "震荡市",
+        }
+        state_desc = state_map.get(market_state, "震荡市") if market_state else "震荡市"
+        weight_descs = {
+            "volume_surge": "放量上涨",
+            "turnover_rank": "成交额排名",
+            "multi_factor": "多因子",
+            "ai_technical": "AI技术面",
+            "institution": "机构追踪",
+        }
+        w = strategy_weights or {}
+
+        lines.append("")
+        lines.append("━" * 60)
+        lines.append("【策略配置】")
+        lines.append("━" * 60)
+        lines.append(f"• 市场状态：{state_desc}（系统自动判断）")
+        if w:
+            weight_parts = [
+                f"{weight_descs.get(k, k)} {v*100:.0f}%"
+                for k, v in sorted(w.items(), key=lambda x: -x[1]) if v > 0
+            ]
+            lines.append(f"• 策略权重：{' + '.join(weight_parts)}")
+        else:
+            lines.append("• 策略权重：放量上涨 25% + 成交额排名 25% + 多因子 25% + AI技术面 15% + 机构追踪 10%")
+
+        # ── ⑥ 股票选择 ─────────────────────────────────
+        lines.append("")
+        lines.append("━" * 60)
+        lines.append("【股票选择】（Top 15 按综合评分降序排列）")
+        lines.append("━" * 60)
+
         if not results:
             lines.append("今日暂无符合条件的股票。")
         else:
-            # 统计数据
             up_count = sum(1 for r in results if r.data and r.data.change_pct > 0)
-            avg_change = sum(r.data.change_pct if r.data else 0 for r in results) / len(results) if results else 0
+            avg_change = (
+                sum(r.data.change_pct if r.data else 0 for r in results) / len(results)
+                if results else 0
+            )
             total_amount = sum(r.data.amount if r.data else 0 for r in results)
-            
-            # 简要统计
+
             lines.append("")
             lines.append(f"• 共筛选出 {len(results)} 只优质股票")
             lines.append(f"• 其中 {up_count} 只上涨，{len(results) - up_count} 只下跌/平盘")
-            lines.append(f"• 平均涨幅: {avg_change:+.2f}%")
-            lines.append(f"• 总成交额: {total_amount/1e8:.2f}亿")
+            lines.append(f"• 平均涨幅：{avg_change:+.2f}%")
+            lines.append(f"• 总成交额：{total_amount/1e8:.2f}亿")
             lines.append("")
-            
-            # Top 10 详细列表
-            lines.append("▶ Top 10 推荐股票")
+            lines.append("▶ 当日策略命中 Top 15 推荐")
             lines.append("")
-            
-            # 表头
-            lines.append("序号 | 股票名称 | 代码 | 评分 | 涨幅 | 成交额 | 入选信号")
-            lines.append("-" * 60)
-            
-            for i, result in enumerate(results[:10], 1):
+
+            for i, result in enumerate(results[:15], 1):
                 name = result.name
                 symbol = result.symbol
                 score = result.score
-                signals = ", ".join(result.signals[:2])
-                
+
                 if result.data:
                     change_pct = result.data.change_pct
                     amount = result.data.amount
-                    amount_str = f"{amount/1e8:.2f}亿" if amount >= 1e8 else f"{amount/1e4:.0f}万"
+                    amount_str = (
+                        f"{amount/1e8:.2f}亿" if amount >= 1e8
+                        else f"{amount/1e4:.0f}万"
+                    )
                     change_str = f"{change_pct:+.2f}%"
+                    price_str = f"{result.data.close:.2f}元"
                 else:
                     amount_str = "N/A"
                     change_str = "N/A"
-                
-                lines.append(f"{i} | {name} | {symbol} | {score:.1f} | {change_str} | {amount_str} | {signals}")
-            
-            # 更多股票概览
-            if len(results) > 10:
+                    price_str = "N/A"
+
+                lines.append(f"▶ {i}. {name}（{symbol}）  评分：{score:.1f}")
+                lines.append(f"   涨幅：{change_str}   成交额：{amount_str}   现价：{price_str}")
+                if result.signals:
+                    sig_str = " / ".join(result.signals[:4])
+                    lines.append(f"   命中策略：{sig_str}")
                 lines.append("")
-                lines.append(f"• 还有 {len(results) - 10} 只备选股票（详见附件）")
-        
-        # ==================== 操作建议 ====================
+
+            if len(results) > 15:
+                lines.append(f"• 还有 {len(results) - 15} 只备选股票（详见附件）")
+
+        # ── ⑦ 操作建议 ─────────────────────────────────
         lines.append("")
-        lines.append("-" * 60)
+        lines.append("━" * 60)
         lines.append("【操作建议】")
-        lines.append("-" * 60)
-        
+        lines.append("━" * 60)
+
         if results:
-            # Top 3 操作建议
-            for i, result in enumerate(results[:3], 1):
-                # 使用 close 作为当前价格
+            for i, result in enumerate(results[:5], 1):
                 current_price = result.data.close if result.data else 0
-                entry_price = current_price * 0.98  # 参考买入价（-2%）
-                stop_loss = current_price * 0.95    # 止损价（-5%）
-                take_profit = current_price * 1.08  # 止盈价（+8%）
-                
+                entry_price = current_price * 0.98
+                stop_loss = current_price * 0.95
+                take_profit = current_price * 1.08
+
+                score = result.score
+                sig_count = len(result.signals)
+                base_win_rate = 50 + (score - 60) / 40 * 30 if score >= 60 else 50
+                bonus = min(sig_count * 3, 15)
+                price_bonus = (
+                    min(max(result.data.change_pct, 0) * 0.5, 5)
+                    if result.data else 0
+                )
+                win_rate = min(round(base_win_rate + bonus + price_bonus, 1), 90.0)
+
                 lines.append("")
-                lines.append(f"▶ {i}. {result.name}({result.symbol})")
-                lines.append(f"   操作建议: 关注")
-                lines.append(f"   当前价格: {current_price:.2f}元")
-                lines.append(f"   买入参考价: {entry_price:.2f}元（参考-2%）")
-                lines.append(f"   止损位: {stop_loss:.2f}元（-5%）")
-                lines.append(f"   止盈位: {take_profit:.2f}元（+8%）")
-                lines.append(f"   综合评分: {result.score:.1f}")
-                lines.append(f"   入选信号: {', '.join(result.signals[:3])}")
-        
-        # ==================== 风险提示 ====================
+                lines.append(f"▶ {i}. {result.name}（{result.symbol}）")
+                lines.append(f"   当前价格：{current_price:.2f}元")
+                lines.append(f"   买入参考：{entry_price:.2f}元（-2%）")
+                lines.append(f"   止损位：  {stop_loss:.2f}元（-5%）")
+                lines.append(f"   止盈位：  {take_profit:.2f}元（+8%）")
+                lines.append(f"   综合评分：{result.score:.1f}")
+                lines.append(f"   预估胜率：{win_rate:.1f}%（基于评分+策略命中数量）")
+                if result.signals:
+                    sig_lines = " / ".join(result.signals)
+                    lines.append(f"   命中策略：{sig_lines}")
+
+        # ── ⑧ 今日总结 ─────────────────────────────────
+        lines.append("")
+        lines.append("━" * 60)
+        lines.append("【今日总结】")
+        lines.append("━" * 60)
+        if results:
+            top_stock = results[0]
+            lines.append(
+                f"• 本次扫描共产出 {len(results)} 只候选股，"
+                f"最高评分为 {top_stock.name}（{top_stock.symbol}），"
+                f"综合得分 {top_stock.score:.1f}"
+            )
+            up_pct = sum(1 for r in results if r.data and r.data.change_pct > 0) / len(results) * 100
+            lines.append(f"• 候选股上涨比例 {up_pct:.0f}%，当前市场情绪偏{'多' if up_pct >= 60 else '空' if up_pct <= 40 else '中性'}")
+            lines.append(f"• 建议重点关注评分 ≥ 75 的个股，结合盘面走势决策")
+            if ipo_list:
+                near = ipo_list[0]
+                lines.append(f"• 近期打新提醒：{near['name']} 申购日 {near['date']}，申购代码 {near['apply_code']}")
+            if bond_list:
+                near_bond = bond_list[0]
+                lines.append(f"• 近期新债提醒：{near_bond['name']} 申购日 {near_bond['date']}，评级 {near_bond['rating']}")
+        else:
+            lines.append("• 今日暂无符合条件的候选股票，建议观望等待机会")
+            lines.append("• 可适当关注指数表现，把握整体市场节奏")
+
+        # ── ⑨ 风险提示 ─────────────────────────────────
         lines.append("")
         lines.append("=" * 60)
         lines.append("【风险提示】")
         lines.append("=" * 60)
-        lines.append("• 以上仅供参考，不构成投资建议")
-        lines.append("• 股市有风险，投资需谨慎")
-        lines.append("• 建议分散持仓，单只仓位不超过总资金的20%")
-        lines.append("• 必须设置止损位（建议-5%），严格执行")
-        lines.append("• 量化模型有局限性，请结合个人判断决策")
+        lines.append("• 以上内容仅供参考，不构成投资建议")
+        lines.append("• 股市有风险，投资需谨慎，请独立判断")
+        lines.append("• 建议分散持仓，单只仓位不超过总资金的 20%")
+        lines.append("• 必须设置止损位（建议 -5%），严格执行，避免重大损失")
+        lines.append("• 量化模型有局限性，不能替代基本面分析与个人判断")
         lines.append("• 所有分析结果基于技术面量化模型，不保证准确性")
         lines.append("• 用户应根据自身判断和风险承受能力做出独立投资决策")
-        
+
         lines.append("")
         lines.append("=" * 60)
-        
+
         return '\n'.join(lines)
     
     def send_email(
@@ -269,39 +544,38 @@ class ReportAgent:
         results: List[ScanResult],
         analysis: Optional[MarketAnalysis] = None,
         strategy_name: str = "量化选股",
-        format: str = "html"
+        format: str = "html",
+        strategy_context: Optional[Dict[str, Any]] = None
     ) -> bool:
         """
         生成报告并发送邮件
-        
-        Args:
-            results: 扫描结果
-            analysis: 市场分析
-            strategy_name: 策略名称
-            format: 报告格式
-            
-        Returns:
-            发送是否成功
         """
         # 生成报告文件
         report_path = self.generate(results, analysis, format)
         
+        ctx = strategy_context or {}
+        
         # 同时生成Markdown版本作为附件
         md_path = None
         if format == "html":
-            md_path = self.generate(results, analysis, "markdown")
+            md_path = self.generate(
+                results, analysis, "markdown",
+                strategy_context=ctx
+            )
         
         # 读取HTML内容
         with open(report_path, 'r', encoding='utf-8') as f:
             html_content = f.read()
         
         # 生成摘要
-        summary = self.generate_summary(results)
+        summary = self.generate_summary(
+            results,
+            market_state=ctx.get("market_state"),
+            strategy_weights=ctx.get("weights")
+        )
         
-        # 准备附件列表
         attachments = [md_path] if md_path else []
         
-        # 发送邮件（带附件）
         success = self.email_sender.send_report(
             results_summary=summary,
             html_content=html_content,
@@ -319,10 +593,5 @@ class ReportAgent:
         return success
     
     def test_email(self) -> bool:
-        """
-        测试邮件配置
-        
-        Returns:
-            测试是否成功
-        """
+        """测试邮件配置"""
         return self.email_sender.test_connection()
