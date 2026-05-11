@@ -65,5 +65,8 @@ output/
 *.log
 preview_*.html
 
+# WorkBuddy runtime
+.workbuddy/
+
 # Sensitive configuration (contains SMTP passwords and API keys)
 configs/settings.yaml
