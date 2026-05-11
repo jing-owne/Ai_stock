@@ -20,181 +20,199 @@ from ..core.config import EmailConfig
 
 def format_email_html(content: str, title: str = "Marcus量化选股报告") -> str:
     """
-    将文本内容格式化为精美的HTML邮件
-    
-    Args:
-        content: 原始文本内容（多行字符串）
-        title: 邮件标题
-        
-    Returns:
-        HTML格式的邮件内容
+    将文本内容格式化为适合 iPhone 阅读的 HTML 邮件。
+
+    设计原则：
+    - 紧凑间距（段落 margin 仅 3-4px），避免大量空白
+    - 一级标题（【】）深蓝底白字，视觉分区明显
+    - ▶ 开头的股票/操作条目用浅灰卡片，左侧彩条
+    - 正文字号 14px，手机可读；最大宽度 600px
+    - 涨幅红色，跌幅绿色，评分橙色
     """
-    # 获取当前时间
     now = datetime.now()
     date_str = now.strftime('%Y年%m月%d日 %H:%M')
-    
-    # 将文本内容转为HTML（保留换行和基本格式）
+
     lines = content.split('\n')
     html_lines = []
-    
+
     for line in lines:
-        line = line.strip()
-        if not line:
-            html_lines.append('<br>')
+        line_stripped = line.strip()
+
+        # 空行 → 小间隔，不输出 <br>（由 CSS margin 控制）
+        if not line_stripped:
             continue
-        
-        # 处理分隔线
-        if line.startswith('==') or line.startswith('━━'):
-            html_lines.append('<hr style="border: none; border-top: 2px solid #3498db; margin: 15px 0;">')
+
+        # ── 分隔线（== 或 ━━ 开头）→ 忽略，改用标题自带边框
+        if line_stripped.startswith('==') or line_stripped.startswith('━━'):
             continue
-        
-        # 处理标题
-        if line.startswith('【') and line.endswith('】'):
-            html_lines.append(f'<h3 style="color: #2c3e50; margin: 15px 0 10px 0; padding-bottom: 5px; border-bottom: 2px solid #3498db;">{line}</h3>')
+
+        # ── 一级标题 【xxx】
+        if line_stripped.startswith('【') and line_stripped.endswith('】'):
+            label = line_stripped[1:-1]
+            html_lines.append(
+                f'<div class="sec-title">{label}</div>'
+            )
             continue
-        
-        # 处理子标题
-        if line.startswith('## '):
-            html_lines.append(f'<h4 style="color: #34495e; margin: 12px 0 8px 0;">{line[3:]}</h4>')
+
+        # ── 子标题 ## xxx
+        if line_stripped.startswith('## '):
+            html_lines.append(
+                f'<div class="sub-title">{line_stripped[3:]}</div>'
+            )
             continue
-        
-        # 处理列表项
-        if line.startswith('• ') or line.startswith('- '):
-            html_lines.append(f'<li style="margin: 5px 0;">{line[2:]}</li>')
+
+        # ── 要点列表 • 或 -
+        if line_stripped.startswith('• ') or line_stripped.startswith('- '):
+            text = line_stripped[2:]
+            text = _highlight(text)
+            html_lines.append(f'<div class="bullet">• {text}</div>')
             continue
-        
-        # 处理序号项（如 "1. xxx"）
-        if re.match(r'^\d+\.\s', line):
-            html_lines.append(f'<li style="margin: 5px 0;">{re.sub(r"^\d+\.\s", "", line)}</li>')
+
+        # ── ▶ 股票/操作卡片
+        if line_stripped.startswith('▶'):
+            text = line_stripped[1:].strip()
+            text = _highlight(text)
+            # 缩进行（前有空格）视为卡片内子行
+            if line.startswith('   '):
+                html_lines.append(f'<div class="card-row">{text}</div>')
+            else:
+                html_lines.append(f'<div class="card-head">{text}</div>')
             continue
-        
-        # 处理引用/重点项
-        if line.startswith('▶'):
-            line = line[1:].strip()
-            html_lines.append(f'<div style="margin: 10px 0; padding: 10px; background: #f8f9fa; border-left: 4px solid #3498db; border-radius: 4px;"><b>{line}</b></div>')
-            continue
-        
-        # 处理表格行（如包含 | 的内容）
-        if '|' in line and line.count('|') >= 2:
-            cells = [c.strip() for c in line.split('|') if c.strip()]
-            if cells and cells[0] not in ['---', '----']:
-                # 判断是否为表头
-                is_header = all(c in cells[0] or cells[0] in c for c in ['股票', '代码', '名称', '评分'])
-                if is_header or len(cells) >= 4:
-                    html_lines.append('<tr>' + ''.join(f'<th style="border: 1px solid #ddd; padding: 8px; background: #3498db; color: white;">{c}</th>' for c in cells) + '</tr>')
-                else:
-                    html_lines.append('<tr>' + ''.join(f'<td style="border: 1px solid #ddd; padding: 8px;">{c}</td>' for c in cells) + '</tr>')
-            continue
-        
-        # 处理普通文本
-        # 高亮数字和百分比
-        line = re.sub(r'([+-]?\d+\.?\d*%)', r'<span style="color: #e74c3c; font-weight: bold;">\1</span>', line)
-        line = re.sub(r'(评分[:：]\d+\.?\d*)', r'<span style="color: #27ae60; font-weight: bold;">\1</span>', line)
-        
-        html_lines.append(f'<p style="margin: 5px 0; line-height: 1.6;">{line}</p>')
-    
+
+        # ── 普通文本
+        text = _highlight(line_stripped)
+        html_lines.append(f'<div class="row">{text}</div>')
+
     content_html = '\n'.join(html_lines)
-    
-    # 生成完整的HTML邮件
-    html = f"""
-<!DOCTYPE html>
-<html>
+
+    html = f"""<!DOCTYPE html>
+<html lang="zh-CN">
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{title}</title>
-    <style>
-        body {{
-            font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-            background-color: #f5f5f5;
-        }}
-        .container {{
-            background-color: white;
-            border-radius: 10px;
-            padding: 30px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }}
-        .header {{
-            text-align: center;
-            border-bottom: 2px solid #3498db;
-            padding-bottom: 20px;
-            margin-bottom: 20px;
-        }}
-        .header h1 {{
-            color: #2c3e50;
-            margin: 0 0 10px 0;
-            font-size: 24px;
-        }}
-        .header .date {{
-            color: #7f8c8d;
-            font-size: 14px;
-        }}
-        .footer {{
-            margin-top: 30px;
-            padding-top: 20px;
-            border-top: 1px solid #ecf0f1;
-            text-align: center;
-            color: #95a5a6;
-            font-size: 12px;
-        }}
-        .warning {{
-            background-color: #fff3cd;
-            border: 1px solid #ffc107;
-            border-radius: 5px;
-            padding: 15px;
-            margin: 15px 0;
-        }}
-        table {{
-            border-collapse: collapse;
-            width: 100%;
-            margin: 10px 0;
-        }}
-        th, td {{
-            border: 1px solid #ddd;
-            padding: 10px;
-            text-align: left;
-        }}
-        th {{
-            background-color: #3498db;
-            color: white;
-        }}
-        tr:nth-child(even) {{
-            background-color: #f8f9fa;
-        }}
-        ul {{
-            margin: 5px 0;
-            padding-left: 20px;
-        }}
-        .emoji {{
-            font-size: 16px;
-        }}
-    </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title}</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{
+  font-family:-apple-system,"PingFang SC","Microsoft YaHei",Arial,sans-serif;
+  font-size:14px;line-height:1.55;color:#222;
+  background:#eef1f5;
+}}
+.wrap{{
+  max-width:600px;margin:0 auto;
+  background:#fff;border-radius:10px;
+  overflow:hidden;
+  box-shadow:0 1px 6px rgba(0,0,0,.12);
+}}
+/* 顶部标题栏 */
+.hdr{{
+  background:linear-gradient(135deg,#1a5fad 0%,#2980b9 100%);
+  padding:16px 16px 12px;
+  text-align:center;color:#fff;
+}}
+.hdr h1{{font-size:17px;font-weight:700;letter-spacing:.5px}}
+.hdr .dt{{font-size:12px;opacity:.85;margin-top:3px}}
+/* 内容区 */
+.body{{padding:12px 14px 16px}}
+/* 一级标题：深蓝底白字 */
+.sec-title{{
+  background:#1a5fad;color:#fff;
+  font-size:13px;font-weight:700;
+  padding:5px 10px;border-radius:4px;
+  margin:10px 0 4px;
+}}
+/* 二级标题：橙色文字 */
+.sub-title{{
+  color:#e67e22;font-size:13px;font-weight:700;
+  margin:7px 0 2px;
+}}
+/* 普通列表行 */
+.bullet{{
+  font-size:13px;color:#333;
+  padding:2px 0 2px 4px;
+  border-left:3px solid #2980b9;
+  margin:2px 0;
+}}
+/* ▶ 卡片头部（股票名行） */
+.card-head{{
+  background:#f0f4f8;
+  border-left:4px solid #2980b9;
+  border-radius:0 4px 4px 0;
+  padding:5px 8px;
+  font-size:13px;font-weight:700;
+  margin:5px 0 1px;
+}}
+/* 卡片内子行（价格/策略等） */
+.card-row{{
+  font-size:12px;color:#444;
+  padding:1px 8px 1px 12px;
+  margin:1px 0;
+}}
+/* 普通文本行 */
+.row{{
+  font-size:13px;color:#333;
+  padding:2px 0;
+  margin:1px 0;
+}}
+/* 数字高亮 */
+.up{{color:#e74c3c;font-weight:600}}
+.dn{{color:#27ae60;font-weight:600}}
+.score{{color:#e67e22;font-weight:600}}
+.amt{{color:#2980b9;font-weight:600}}
+/* 底部 */
+.ftr{{
+  background:#f8f9fb;
+  border-top:1px solid #e0e6ed;
+  padding:8px 14px;
+  text-align:center;
+  font-size:11px;color:#999;
+}}
+</style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>{title}</h1>
-            <div class="date">{date_str}</div>
-        </div>
-        
-        <div class="content">
-            {content_html}
-        </div>
-        
-        <div class="footer">
-            <p>本报告由 <strong>Marcus量化选股小助手</strong> 自动生成</p>
-            <p>仅供参考，不构成投资建议 | 股市有风险，投资需谨慎</p>
-        </div>
-    </div>
+<div class="wrap">
+  <div class="hdr">
+    <h1>{title}</h1>
+    <div class="dt">{date_str}</div>
+  </div>
+  <div class="body">
+{content_html}
+  </div>
+  <div class="ftr">本报告由 Marcus量化选股小助手 自动生成 · 仅供参考，不构成投资建议</div>
+</div>
 </body>
-</html>
-"""
+</html>"""
     return html
+
+
+def _highlight(text: str) -> str:
+    """对文本中的数字、百分比、评分做颜色高亮"""
+    # 正涨幅（+开头或纯正数%）→ 红
+    text = re.sub(
+        r'(\+\d+\.?\d*%)',
+        r'<span class="up">\1</span>', text
+    )
+    # 负涨幅 → 绿
+    text = re.sub(
+        r'(-\d+\.?\d*%)',
+        r'<span class="dn">\1</span>', text
+    )
+    # 无符号百分比（涨幅/换手等）→ 红
+    text = re.sub(
+        r'(?<![+-])(\b\d+\.?\d*%)(?!</span>)',
+        r'<span class="up">\1</span>', text
+    )
+    # 评分 → 橙
+    text = re.sub(
+        r'(评分[:：]\s*\d+\.?\d*)',
+        r'<span class="score">\1</span>', text
+    )
+    # 成交额（含"亿"或"万"）→ 蓝
+    text = re.sub(
+        r'(\d+\.?\d*[亿万])',
+        r'<span class="amt">\1</span>', text
+    )
+    return text
 
 
 class EmailSender:
@@ -353,9 +371,28 @@ class EmailSender:
         Returns:
             发送是否成功
         """
-        # 构建邮件主题
+        # 构建邮件主题（避免 subject_prefix 与 strategy_name 内容重叠）
         today = datetime.now().strftime('%Y-%m-%d')
-        subject = f"{self.config.subject_prefix} {today} {strategy_name}选股报告"
+        prefix = self.config.subject_prefix.strip()
+        # strategy_name 可能是枚举 .name（全大写下划线），转换为可读中文
+        _strategy_name_map = {
+            "VOLUME_SURGE": "放量上涨",
+            "TURNOVER_RANK": "成交额排名",
+            "MULTI_FACTOR": "多因子",
+            "AI_TECHNICAL": "AI技术面",
+            "INSTITUTION": "机构追踪",
+            "volume_surge": "放量上涨",
+            "turnover_rank": "成交额排名",
+            "multi_factor": "多因子",
+            "ai_technical": "AI技术面",
+            "institution": "机构追踪",
+        }
+        display_name = _strategy_name_map.get(strategy_name, strategy_name)
+        # 若 display_name 已包含在 prefix 中，则不重复追加
+        if display_name and display_name not in prefix:
+            subject = f"{prefix} {today} {display_name}选股报告"
+        else:
+            subject = f"{prefix} {today} 选股报告"
         
         # 使用配置中的收件人
         to_emails = self.config.to_emails if self.config.to_emails else []

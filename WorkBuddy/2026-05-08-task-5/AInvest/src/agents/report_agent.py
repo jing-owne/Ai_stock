@@ -104,46 +104,80 @@ def _news_from_sina(today_str: str) -> List[Tuple[str, str, str]]:
 
 def _news_from_jin10(today_str: str) -> List[Tuple[str, str, str]]:
     """
-    金十数据 Flash 快讯（flash_newest.js）
-    过滤今日、content 非空、优先 important=1
+    金十数据 Flash 快讯（flash-api.jin10.com A股/财经分类）
+    channel=-8200, classify=[29]
+    过滤今日、中文条目，去除HTML标签
     返回 List[(time_hhmm, content, source_tag)]
     """
     try:
-        url = "https://www.jin10.com/flash_newest.js?rnd=0.1"
+        import urllib.parse
+        url = "https://flash-api.jin10.com/get_flash_list?channel=-8200&vip=1&classify=%5B29%5D"
         raw = _http_get(url, {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-            "Referer": "https://www.jin10.com/",
+            "accept": "application/json, text/plain, */*",
+            "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "sec-ch-ua-platform": '"Windows"',
+            "user-agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/146.0.0.0 Safari/537.36 Edg/146.0.0.0"
+            ),
+            "x-app-id": "bVBF4FyRTn5NJF5n",
+            "x-version": "1.0.0",
         })
-        # 格式：var newest = [...]
-        json_str = re.sub(r"^var\s+newest\s*=\s*", "", raw.strip())
-        if json_str.endswith(";"):
-            json_str = json_str[:-1]
-        items = json.loads(json_str)
+        data = json.loads(raw)
+        # 新接口返回格式：{"status": 200, "message": "OK", "data": [...]}
+        # data 字段直接是列表
+        items = []
+        if isinstance(data, dict):
+            raw_data = data.get("data", [])
+            if isinstance(raw_data, list):
+                items = raw_data
+            elif isinstance(raw_data, dict):
+                items = raw_data.get("items") or raw_data.get("data") or []
+        elif isinstance(data, list):
+            items = data
+
         result = []
         for item in items:
-            time_raw = item.get("time", "")  # "2026-05-11 10:32:06"
-            content = (item.get("data", {}).get("content") or "").strip()
-            title = (item.get("data", {}).get("title") or "").strip()
+            # 时间字段可能是 created_at 或 time
+            time_raw = item.get("created_at") or item.get("time", "")
+            # 内容字段
+            if isinstance(item.get("data"), dict):
+                content = (item["data"].get("content") or "").strip()
+                title = (item["data"].get("title") or "").strip()
+            else:
+                content = (item.get("content") or "").strip()
+                title = (item.get("title") or "").strip()
             text = title or content
             if not text:
                 continue
-            # 清理 HTML 标签（如 <b>、</b>）
+            # 清理 HTML 标签
             text = re.sub(r"<[^>]+>", "", text).strip()
             if not text:
                 continue
+            # 优化金十条目显示：若形如【标题】金十数据...，则仅取方括号内标题
+            bracket_match = re.match(r"^【(.+?)】", text)
+            if bracket_match:
+                text = bracket_match.group(1).strip()
+            # 若超过60字则截断（避免长摘要占版）
+            if len(text) > 60:
+                text = text[:58] + "…"
+            # 解析时间
             try:
-                dt = datetime.strptime(time_raw[:19], "%Y-%m-%d %H:%M:%S")
+                # 支持 "2026-05-11 10:32:06" 和 "2026-05-11T10:32:06+08:00"
+                time_clean = time_raw[:19].replace("T", " ")
+                dt = datetime.strptime(time_clean, "%Y-%m-%d %H:%M:%S")
                 time_str = dt.strftime("%H:%M")
                 date_str = dt.strftime("%Y-%m-%d")
             except Exception:
                 continue
             if date_str != today_str:
                 continue
-            # 跳过纯英文条目（一般是国际市场英文数据播报）
+            # 跳过纯英文条目
             chinese_chars = len(re.findall(r"[\u4e00-\u9fa5]", text))
             if chinese_chars < 3:
                 continue
-            # 跳过"图示"类图片条目
+            # 跳过图示类图片条目
             if "金十图示" in text or "金十图解" in text:
                 continue
             result.append((time_str, text, "金十"))
@@ -225,7 +259,7 @@ def _fetch_market_news(num: int = 10) -> List[str]:
         if prefix in seen_prefixes:
             continue
         seen_prefixes.add(prefix)
-        deduped.append(f"{time_str} [{source}] {title}")
+        deduped.append(f"[{source}] {title}")
         if len(deduped) >= num:
             break
 
@@ -471,39 +505,27 @@ class ReportAgent:
         # ── ④ 打新日历 ─────────────────────────────────
         lines.append("")
         lines.append("━" * 60)
-        lines.append("【打新日历】（近14天新股 & 新债申购）")
+        lines.append("【打新日历】（近14天新股 & 新债）")
         lines.append("━" * 60)
         calendar = _fetch_ipo_calendar(days_ahead=14)
         ipo_list = calendar.get("ipo", [])
         bond_list = calendar.get("bond", [])
 
-        # 新股
-        lines.append("")
-        lines.append("▶ 新股申购")
-        if ipo_list:
-            lines.append("申购日期   股票名称         申购代码   发行价   市场")
-            lines.append("-" * 60)
-            for item in sorted(ipo_list, key=lambda x: x["date"]):
-                lines.append(
-                    f"{item['date']}  {item['name']:<12}  {item['apply_code']}   "
-                    f"{item['price']:<8} {item['market']}"
-                )
-        else:
-            lines.append("• 近14天内暂无新股申购安排")
-
-        # 新债
-        lines.append("")
-        lines.append("▶ 可转债申购（新债）")
-        if bond_list:
-            lines.append("发行/申购日  债券名称         代码      评级   发行价   上市日")
-            lines.append("-" * 60)
-            for item in sorted(bond_list, key=lambda x: x["date"]):
-                lines.append(
-                    f"{item['date']}  {item['name']:<12}  {item['code']}  "
-                    f"{item['rating']:<5} {item['price']:<8} {item['listing']}"
-                )
-        else:
-            lines.append("• 近14天内暂无可转债申购安排")
+        has_any = False
+        # 新股（紧凑单行）
+        for item in sorted(ipo_list, key=lambda x: x["date"]):
+            lines.append(
+                f"▶ [新股] {item['date']}  {item['name']}  {item['apply_code']}  {item['price']}  {item['market']}"
+            )
+            has_any = True
+        # 新债（紧凑单行）
+        for item in sorted(bond_list, key=lambda x: x["date"]):
+            lines.append(
+                f"▶ [新债] {item['date']}  {item['name']}  {item['code']}  {item['rating']}  {item['price']}  上市:{item['listing']}"
+            )
+            has_any = True
+        if not has_any:
+            lines.append("• 近14天暂无新股/新债申购安排")
 
         # ── ⑤ 策略配置 ─────────────────────────────────
         state_map = {
