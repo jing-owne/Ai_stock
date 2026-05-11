@@ -591,7 +591,15 @@ class EmailSender:
                 name = stock.get('name', '')
                 current_price = stock.get('current_price', 0)
                 change_pct = stock.get('change_pct', 0)
-                content_lines.append(f"▶ {i}. {name}（{symbol}）  现价：{current_price:.2f}元 ({change_pct:+.2f}%)")
+                score = stock.get('score', 0)
+                amount = stock.get('amount', 0)
+                signals = stock.get('signals', [])
+                change_str = f"{change_pct:+.2f}%"
+                amount_str = f"{amount/1e8:.2f}亿" if amount >= 1e8 else f"{amount/1e4:.0f}万" if amount > 0 else "N/A"
+                sig_str = " / ".join(signals[:3]) if signals else "-"
+                content_lines.append(f"▶ {i}. {name}（{symbol}）  成交额：{amount_str}")
+                content_lines.append(f"   评分：{score:.1f}分  现价：{current_price:.2f}元 ({change_str})")
+                content_lines.append(f"   命中策略：{sig_str}")
                 content_lines.append("")
 
         content_lines.append("=" * 50)
@@ -611,10 +619,13 @@ class EmailSender:
                 stop_loss = stock.get('stop_loss', suggest_buy_price * 0.95)
                 take_profit = stock.get('take_profit', suggest_buy_price * 1.10)
                 win_rate = stock.get('win_rate', 0)
-                
-                content_lines.append(f"▶ {i}. {name}（{symbol}） 现价：{current_price:.2f}元 ({change_pct:+.2f}%)   建议买入：{suggest_buy_price:.2f}元")
+                signals = stock.get('signals', [])
+                sig_str = " / ".join(signals[:3]) if signals else "-"
+
+                content_lines.append(f"▶ {i}. {name}（{symbol}）   预估胜率：<strong style='color:#DC2626;font-weight:bold;'>{win_rate:.1f}%</strong>")
+                content_lines.append(f"   现价：{current_price:.2f}元 ({change_pct:+.2f}%)   建议买入：{suggest_buy_price:.2f}元")
                 content_lines.append(f"   止损：{stop_loss:.2f}元（-5%）  止盈：{take_profit:.2f}元（+8%）")
-                content_lines.append(f"   预估胜率：<strong style='color:#DC2626;font-weight:bold;'>{win_rate:.1f}%</strong>")
+                content_lines.append(f"   命中策略：{sig_str}")
                 content_lines.append("")
         
         content_lines.append("=" * 50)
