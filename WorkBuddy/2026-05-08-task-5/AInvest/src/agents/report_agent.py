@@ -230,7 +230,7 @@ def _is_relevant_news(title: str) -> bool:
     过滤新闻：保留股票、财经、公司相关；过滤国际政治、战事等无关内容
     返回 True 表示保留，False 表示过滤掉
     """
-    # 过滤关键词（国际政治/战事/外交/体育/娱乐/美股等）
+    # 过滤关键词（国际政治/战事/外交/美股等）
     _filter_keywords = [
         # 国际/外交/美股
         "美伊", "美股", "道琼斯", "纳斯达克", "标普500",
@@ -243,6 +243,8 @@ def _is_relevant_news(title: str) -> bool:
         "奥运", "世界杯", "NBA", "足球", "篮球", "演唱会", "电影",
         # 其他无关
         "地震", "台风", "洪水", "疫情",
+        # 战争/冲突相关
+        "战争", "冲突", "交火", "打击", "制裁", "军事",
     ]
     for kw in _filter_keywords:
         if kw in title:
@@ -609,16 +611,7 @@ class ReportAgent:
         if not results:
             lines.append("今日暂无符合条件的股票。")
         else:
-            up_count = sum(1 for r in results if r.data and r.data.change_pct > 0)
-            avg_change = (
-                sum(r.data.change_pct if r.data else 0 for r in results) / len(results)
-                if results else 0
-            )
-            total_amount = sum(r.data.amount if r.data else 0 for r in results)
-
-            lines.append(f"• 共筛选出 {len(results)} 只优质股票  |  上涨 {up_count} 只  |  平均 {avg_change:+.2f}%  |  总成交额 {total_amount/1e8:.2f}亿")
-
-            # Top 15 列表（统一卡片格式，无颜色边框）
+            # Top 15 列表（直接展示，正文缩进，命中策略单独换行）
             for i, result in enumerate(results[:15], 1):
                 name = result.name
                 symbol = result.symbol
@@ -640,16 +633,19 @@ class ReportAgent:
 
                 sig_str = " / ".join(result.signals[:3]) if result.signals else ""
                 lines.append(f"▶ {i}. {name}（{symbol}）  评分：{score:.1f}")
-                lines.append(f"   涨幅：{change_str}  成交额：{amount_str}  现价：{price_str}  策略：{sig_str}")
+                lines.append(f"    涨幅：{change_str}  成交额：{amount_str}  现价：{price_str}")
+                lines.append(f"    命中策略：{sig_str}")
 
             if len(results) > 15:
                 lines.append(f"• 还有 {len(results) - 15} 只备选股票（详见附件）")
 
-            # 操作建议（5只，合并在同一样式下）
+            # 操作建议（5只，含涨跌幅）
             lines.append("")
             lines.append("◆ 操作建议（Top 5）")
             for i, result in enumerate(results[:5], 1):
                 current_price = result.data.close if result.data else 0
+                change_pct = result.data.change_pct if result.data else 0
+                change_str = f"{change_pct:+.2f}%"
                 entry_price = current_price * 0.98
                 stop_loss = current_price * 0.95
                 take_profit = current_price * 1.08
@@ -659,13 +655,12 @@ class ReportAgent:
                 base_win_rate = 50 + (score - 60) / 40 * 30 if score >= 60 else 50
                 bonus = min(sig_count * 3, 15)
                 price_bonus = (
-                    min(max(result.data.change_pct, 0) * 0.5, 5)
-                    if result.data else 0
+                    min(max(result.data.change_pct if result.data else 0, 0) * 0.5, 5)
                 )
                 win_rate = min(round(base_win_rate + bonus + price_bonus, 1), 90.0)
 
                 lines.append(f"▶ {i}. {result.name}（{result.symbol}）  评分：{result.score:.1f}  胜率：{win_rate:.1f}%")
-                lines.append(f"   买入：{entry_price:.2f}元  止损：{stop_loss:.2f}元（-5%）  止盈：{take_profit:.2f}元（+8%）")
+                lines.append(f"    现价：{current_price:.2f}元（{change_str}）  买入：{entry_price:.2f}元  止损：{stop_loss:.2f}元（-5%）  止盈：{take_profit:.2f}元（+8%）")
 
         # ── ⑦ 今日总结 ─────────────────────────────────
         lines.append("")
