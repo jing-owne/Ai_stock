@@ -37,7 +37,8 @@ class ReportAgent:
         results: List[ScanResult],
         analysis: Optional[MarketAnalysis] = None,
         format: str = "html",
-        template: Optional[str] = None
+        template: Optional[str] = None,
+        strategy_context: Optional[Dict[str, Any]] = None
     ) -> str:
         """
         生成分析报告
@@ -47,6 +48,7 @@ class ReportAgent:
             analysis: 市场分析
             format: 报告格式 (html/markdown/json)
             template: 模板名称
+            strategy_context: 策略上下文（含子策略 Top 10，用于 MD 附件）
             
         Returns:
             报告文件路径
@@ -79,7 +81,8 @@ class ReportAgent:
         content = generator.generate(
             results=results,
             analysis=analysis,
-            format=format
+            format=format,
+            strategy_context=strategy_context
         )
         
         # 写入文件
@@ -160,7 +163,7 @@ class ReportAgent:
             lines.append("")
             
             # Top 15 详细列表（卡片式多行展示，含命中策略）
-            lines.append("▶ Top 15 推荐股票")
+            lines.append("▶ 当日策略命中 Top 15 推荐")
             lines.append("")
             
             for i, result in enumerate(results[:15], 1):
@@ -203,6 +206,18 @@ class ReportAgent:
                 stop_loss = current_price * 0.95
                 take_profit = current_price * 1.08
                 
+                # 胜率估算：基于评分 + 命中策略数量
+                # 评分越高、命中策略越多 → 胜率越高
+                score = result.score
+                sig_count = len(result.signals)
+                # 基础胜率：评分映射到 50%-80%
+                base_win_rate = 50 + (score - 60) / 40 * 30 if score >= 60 else 50
+                # 策略奖励：每多命中1个策略 +3%
+                bonus = min(sig_count * 3, 15)
+                # 涨幅奖励：当日已有涨幅说明趋势更强 +0~5%
+                price_bonus = min(max(result.data.change_pct, 0) * 0.5, 5) if result.data else 0
+                win_rate = min(round(base_win_rate + bonus + price_bonus, 1), 90.0)
+                
                 lines.append("")
                 lines.append(f"▶ {i}. {result.name}（{result.symbol}）")
                 lines.append(f"   当前价格: {current_price:.2f}元")
@@ -210,6 +225,7 @@ class ReportAgent:
                 lines.append(f"   止损位:   {stop_loss:.2f}元（-5%）")
                 lines.append(f"   止盈位:   {take_profit:.2f}元（+8%）")
                 lines.append(f"   综合评分: {result.score:.1f}")
+                lines.append(f"   预估胜率: {win_rate:.1f}%（基于评分+策略命中数量）")
                 # 展示该股所有入选信号
                 if result.signals:
                     sig_lines = " / ".join(result.signals)
@@ -253,17 +269,22 @@ class ReportAgent:
         # 生成报告文件
         report_path = self.generate(results, analysis, format)
         
-        # 同时生成Markdown版本作为附件
+        # 策略上下文（含子策略 Top 10）
+        ctx = strategy_context or {}
+        
+        # 同时生成Markdown版本作为附件（含各子策略 Top 10）
         md_path = None
         if format == "html":
-            md_path = self.generate(results, analysis, "markdown")
+            md_path = self.generate(
+                results, analysis, "markdown",
+                strategy_context=ctx
+            )
         
         # 读取HTML内容
         with open(report_path, 'r', encoding='utf-8') as f:
             html_content = f.read()
         
         # 生成摘要（带策略上下文）
-        ctx = strategy_context or {}
         summary = self.generate_summary(
             results,
             market_state=ctx.get("market_state"),

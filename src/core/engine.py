@@ -84,6 +84,27 @@ class AInvestEngine:
             results, context = self.strategy_agent.execute_with_context(
                 strategy, market_data, **kwargs
             )
+            # 从 CompositeStrategy 实例获取各子策略 Top 10
+            from ..strategies.composite_strategy import CompositeStrategy
+            comp_strategy = self.strategy_agent.registry.get_strategy(strategy)
+            if isinstance(comp_strategy, CompositeStrategy):
+                from ..strategies.composite_strategy import MARKET_STATE_WEIGHTS
+                mstate = comp_strategy._last_market_state
+                weights = comp_strategy._last_weights
+                params = self.strategy_agent._get_strategy_params(strategy)
+                sub_raw = comp_strategy._execute_sub_strategies(market_data, params)
+                # 整理每个子策略 Top 10
+                sub_top10: Dict[str, List] = {}
+                for sname in ["volume_surge", "turnover_rank", "multi_factor", "ai_technical", "institution"]:
+                    items = []
+                    for sym, strat_map in sub_raw.items():
+                        if sname in strat_map:
+                            items.append(strat_map[sname])
+                    items.sort(key=lambda x: x.score, reverse=True)
+                    sub_top10[sname] = items[:10]
+                context["sub_top10"] = sub_top10
+                context["market_state"] = mstate
+                context["weights"] = weights
             self._last_strategy_context = context
         else:
             results = self.strategy_agent.execute(strategy, market_data, **kwargs)

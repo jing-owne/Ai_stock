@@ -26,7 +26,8 @@ class ReportGenerator:
         self,
         results: List[ScanResult],
         analysis: Optional[MarketAnalysis] = None,
-        format: str = "html"
+        format: str = "html",
+        strategy_context: Optional[Dict] = None
     ) -> str:
         """
         生成报告
@@ -35,6 +36,7 @@ class ReportGenerator:
             results: 扫描结果
             analysis: 市场分析
             format: 输出格式
+            strategy_context: 策略上下文（含子策略 Top 10）
             
         Returns:
             报告内容
@@ -42,7 +44,7 @@ class ReportGenerator:
         if format == "html":
             return self._generate_html(results, analysis)
         elif format == "markdown":
-            return self._generate_markdown(results, analysis)
+            return self._generate_markdown(results, analysis, strategy_context)
         elif format == "json":
             return self._generate_json(results, analysis)
         else:
@@ -60,40 +62,114 @@ class ReportGenerator:
     def _generate_markdown(
         self,
         results: List[ScanResult],
-        analysis: Optional[MarketAnalysis]
+        analysis: Optional[MarketAnalysis],
+        strategy_context: Optional[Dict] = None
     ) -> str:
-        """生成Markdown报告"""
+        """生成Markdown报告（含各子策略 Top 10）"""
+        now = datetime.now()
+        date_str = now.strftime('%Y年%m月%d日 %H:%M')
+        today = now.strftime('%Y-%m-%d')
+
         lines = [
-            "# AInvest 股票扫描报告",
+            "# 📈 Marcus量化选股系统 · 策略详细报告",
             "",
-            f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            f"> 生成时间：{date_str}",
             "",
         ]
-        
-        if analysis:
-            lines.extend([
-                "## 市场分析",
-                "",
-                f"- **市场情绪**: {analysis.market_sentiment}",
-                f"- **风险等级**: {analysis.risk_level}",
-                f"- **总结**: {analysis.summary}",
-                "",
-            ])
-        
-        lines.extend([
-            "## 扫描结果",
+
+        ctx = strategy_context or {}
+        market_state = ctx.get("market_state", "volatile")
+        weights: Dict = ctx.get("weights", {})
+        sub_top10: Dict = ctx.get("sub_top10", {})
+
+        # 市场状态
+        state_map = {"trend_up": "📈 上涨趋势", "trend_down": "📉 下跌趋势", "volatile": "📊 震荡市"}
+        state_desc = state_map.get(market_state, "📊 震荡市")
+        lines += [
+            "## 一、市场状态 & 策略权重",
             "",
-            f"共发现 **{len(results)}** 只符合条件的股票:",
+            f"- **市场状态**：{state_desc}",
+        ]
+        if weights:
+            weight_names = {
+                "volume_surge": "放量上涨",
+                "turnover_rank": "成交额排名",
+                "multi_factor": "多因子",
+                "ai_technical": "AI技术面",
+                "institution": "机构追踪",
+            }
+            for k, v in sorted(weights.items(), key=lambda x: -x[1]):
+                if v > 0:
+                    lines.append(f"- **{weight_names.get(k, k)}**：{v*100:.0f}%")
+        lines.append("")
+
+        # 各子策略 Top 10
+        if sub_top10:
+            strategy_display = {
+                "volume_surge": ("🚀 放量上涨策略", "筛选条件：涨幅≥1%、成交额≥1亿、成交量比≥2倍"),
+                "turnover_rank": ("💰 成交额排名策略", "筛选条件：成交额 Top20、成交额≥5亿"),
+                "multi_factor": ("📐 多因子策略", "筛选条件：量价换手综合评分≥50"),
+                "ai_technical": ("🤖 AI技术面策略", "筛选条件：AI形态+趋势评分≥75"),
+                "institution": ("🏦 机构追踪策略", "筛选条件：机构数量≥3家、持仓比≥5%"),
+            }
+            lines += ["## 二、各子策略 Top 10 明细", ""]
+
+            for sname, (title, desc) in strategy_display.items():
+                items = sub_top10.get(sname, [])
+                lines += [f"### {title}", f"> {desc}", ""]
+                if not items:
+                    lines += ["*本策略今日无符合条件的股票*", ""]
+                    continue
+                lines += [
+                    "| 排名 | 股票名称 | 代码 | 评分 | 涨幅 | 成交额 | 命中信号 |",
+                    "|:---:|:---|:---|:---:|:---:|:---:|:---|",
+                ]
+                for i, r in enumerate(items, 1):
+                    if r.data:
+                        change_str = f"{r.data.change_pct:+.2f}%"
+                        amt = r.data.amount
+                        amt_str = f"{amt/1e8:.2f}亿" if amt >= 1e8 else f"{amt/1e4:.0f}万"
+                    else:
+                        change_str = "N/A"
+                        amt_str = "N/A"
+                    sigs = " / ".join(r.signals[:3]) if r.signals else "-"
+                    lines.append(
+                        f"| {i} | {r.name} | `{r.symbol}` | **{r.score:.1f}** | {change_str} | {amt_str} | {sigs} |"
+                    )
+                lines.append("")
+
+        # 综合 Top 15
+        lines += [
+            "## 三、当日策略命中 Top 15 推荐",
             "",
-        ])
-        
-        for i, result in enumerate(results[:20], 1):
-            signals = ", ".join(result.signals[:3])
+            "综合5大策略加权评分后，Top 15 优选股票：",
+            "",
+            "| 排名 | 股票名称 | 代码 | 综合评分 | 涨幅 | 成交额 | 命中策略 |",
+            "|:---:|:---|:---|:---:|:---:|:---:|:---|",
+        ]
+        for i, r in enumerate(results[:15], 1):
+            if r.data:
+                change_str = f"{r.data.change_pct:+.2f}%"
+                amt = r.data.amount
+                amt_str = f"{amt/1e8:.2f}亿" if amt >= 1e8 else f"{amt/1e4:.0f}万"
+            else:
+                change_str = "N/A"
+                amt_str = "N/A"
+            sigs = " / ".join(r.signals[:3]) if r.signals else "-"
             lines.append(
-                f"{i}. **{result.name}** ({result.symbol}) - "
-                f"评分: {result.score:.1f} - 信号: {signals}"
+                f"| {i} | {r.name} | `{r.symbol}` | **{r.score:.1f}** | {change_str} | {amt_str} | {sigs} |"
             )
-        
+        lines.append("")
+
+        # 风险提示
+        lines += [
+            "---",
+            "",
+            "> ⚠️ **免责声明**：本报告由 Marcus量化选股系统自动生成，基于技术面量化模型，",
+            "> 不构成任何投资建议。股市有风险，投资需谨慎，请根据自身判断独立决策。",
+            "",
+        ]
+
         return "\n".join(lines)
     
     def _generate_json(
