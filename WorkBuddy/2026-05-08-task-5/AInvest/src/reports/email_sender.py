@@ -61,6 +61,19 @@ def format_email_html(content: str, title: str = "Marcus量化选股报告") -> 
             )
             continue
 
+        # ── 新闻行 ◆ 开头
+        if line_stripped.startswith('◆ '):
+            text = line_stripped[2:]
+            text = _highlight(text)
+            html_lines.append(f'<div class="news-item">◆ {text}</div>')
+            continue
+
+        # ── 打新日历行 ▶ [新股/新债] 开头
+        if '▶ [新股]' in line_stripped or '▶ [新债]' in line_stripped:
+            text = _highlight(line_stripped)
+            html_lines.append(f'<div class="ipo-item">{text}</div>')
+            continue
+
         # ── 要点列表 • 或 -
         if line_stripped.startswith('• ') or line_stripped.startswith('- '):
             text = line_stripped[2:]
@@ -68,7 +81,7 @@ def format_email_html(content: str, title: str = "Marcus量化选股报告") -> 
             html_lines.append(f'<div class="bullet">• {text}</div>')
             continue
 
-        # ── ▶ 股票/操作卡片
+        # ── ▶ 股票/操作卡片（Top15 + 操作建议，统一背景）
         if line_stripped.startswith('▶'):
             text = line_stripped[1:].strip()
             text = _highlight(text)
@@ -104,24 +117,24 @@ body{{
   overflow:hidden;
   box-shadow:0 1px 6px rgba(0,0,0,.12);
 }}
-/* 顶部标题栏 */
+/* 顶部标题栏：深紫蓝，更高对比 */
 .hdr{{
-  background:linear-gradient(135deg,#1a5fad 0%,#2980b9 100%);
+  background:linear-gradient(135deg,#0d2f5e 0%,#1a4f9e 100%);
   padding:16px 16px 12px;
   text-align:center;color:#fff;
 }}
 .hdr h1{{font-size:17px;font-weight:700;letter-spacing:.5px}}
-.hdr .dt{{font-size:12px;opacity:.85;margin-top:3px}}
+.hdr .dt{{font-size:12px;opacity:.8;margin-top:3px}}
 /* 内容区 */
 .body{{padding:12px 14px 16px}}
-/* 一级标题：深蓝底白字 */
+/* 一级标题：科技蓝（比header浅，形成层次） */
 .sec-title{{
-  background:#1a5fad;color:#fff;
+  background:#2196F3;color:#fff;
   font-size:13px;font-weight:700;
   padding:5px 10px;border-radius:4px;
   margin:10px 0 4px;
 }}
-/* 二级标题：橙色文字 */
+/* 二级标题：深灰橙色文字 */
 .sub-title{{
   color:#e67e22;font-size:13px;font-weight:700;
   margin:7px 0 2px;
@@ -129,24 +142,43 @@ body{{
 /* 普通列表行 */
 .bullet{{
   font-size:13px;color:#333;
-  padding:2px 0 2px 4px;
-  border-left:3px solid #2980b9;
+  padding:3px 8px 3px 10px;
+  border-left:3px solid #2196F3;
   margin:2px 0;
 }}
-/* ▶ 卡片头部（股票名行） */
-.card-head{{
-  background:#f0f4f8;
-  border-left:4px solid #2980b9;
-  border-radius:0 4px 4px 0;
-  padding:5px 8px;
-  font-size:13px;font-weight:700;
-  margin:5px 0 1px;
+/* 新闻行：淡蓝底，无边框，超长截断不换行 */
+.news-item{{
+  font-size:13px;color:#333;
+  background:#eef6ff;
+  padding:3px 8px 3px 10px;
+  border-radius:4px;
+  margin:2px 0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }}
-/* 卡片内子行（价格/策略等） */
+/* 打新日历行：淡绿底，▶前缀 */
+.ipo-item{{
+  font-size:12px;color:#333;
+  background:#f0faf0;
+  padding:3px 8px 3px 10px;
+  border-radius:4px;
+  margin:2px 0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}}
+/* ▶ 股票统一卡片（Top15 + 操作建议共用，去除颜色左边框，统一浅灰底） */
+.card-head{{
+  background:#f5f7fa;
+  border-radius:6px;
+  padding:5px 10px;
+  font-size:13px;font-weight:600;
+  margin:4px 0 1px;
+}}
+/* 股票子行（价格/评分/信号等，统一同色底） */
 .card-row{{
-  font-size:12px;color:#444;
-  padding:1px 8px 1px 12px;
-  margin:1px 0;
+  background:#f5f7fa;
+  font-size:12px;color:#555;
+  padding:1px 10px 2px 10px;
+  margin:0 0 2px;
+  border-radius:0 0 6px 6px;
 }}
 /* 普通文本行 */
 .row{{

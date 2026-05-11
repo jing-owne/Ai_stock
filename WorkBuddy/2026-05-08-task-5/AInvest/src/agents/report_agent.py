@@ -230,13 +230,15 @@ def _is_relevant_news(title: str) -> bool:
     过滤新闻：保留股票、财经、公司相关；过滤国际政治、战事等无关内容
     返回 True 表示保留，False 表示过滤掉
     """
-    # 过滤关键词（国际政治/战事/外交/体育/娱乐等）
+    # 过滤关键词（国际政治/战事/外交/体育/娱乐/美股等）
     _filter_keywords = [
-        # 国际/外交
-        "美伊", "伊朗", "以色列", "俄罗斯", "乌克兰", "朝鲜", "美联储",
+        # 国际/外交/美股
+        "美伊", "美股", "道琼斯", "纳斯达克", "标普500",
+        "伊朗", "以色列", "俄罗斯", "乌克兰", "朝鲜", "朝鲜半岛",
+        "美联储", "鲍威尔", "耶伦",
         "白宫", "拜登", "特朗普", "欧盟", "北约", "联合国",
         "巴以", "加沙", "哈马斯", "胡塞", "中东", "叙利亚",
-        "印巴", "印度", "巴基斯坦",
+        "印巴", "印度", "巴基斯坦", "缅甸", "阿富汗",
         # 体育/娱乐
         "奥运", "世界杯", "NBA", "足球", "篮球", "演唱会", "电影",
         # 其他无关
@@ -248,14 +250,14 @@ def _is_relevant_news(title: str) -> bool:
 
     # 保留关键词（只要含有以下词之一就保留）
     _keep_keywords = [
-        "股", "A股", "港股", "上证", "深证", "创业板", "科创板",
-        "基金", "债券", "可转债", "打新", "新股",
+        "股", "A股", "港股", "上证", "深证", "创业板", "科创板", "北交所",
+        "基金", "ETF", "债券", "可转债", "打新", "新股",
         "公司", "企业", "集团", "股份", "科技", "银行", "保险",
         "券商", "证券", "资本", "投资", "并购", "重组", "定增",
         "财经", "金融", "经济", "货币", "利率", "通胀", "CPI", "PMI",
-        "央行", "人民银行", "证监会", "交易所",
+        "央行", "人民银行", "证监会", "交易所", "公告",
         "涨停", "跌停", "涨幅", "跌幅", "成交",
-        "营收", "净利", "利润", "业绩", "财报",
+        "营收", "净利", "利润", "业绩", "财报", "分红",
         "指数", "板块", "题材", "龙头",
     ]
     for kw in _keep_keywords:
@@ -303,6 +305,9 @@ def _fetch_market_news(num: int = 10) -> List[str]:
         # 过滤无关新闻
         if not _is_relevant_news(title):
             continue
+        # 字数限制：超过40字截断
+        if len(title) > 40:
+            title = title[:38] + '…'
         deduped.append(title)
         if len(deduped) >= num:
             break
@@ -521,9 +526,6 @@ class ReportAgent:
         weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
         weekday = weekdays[datetime.now().weekday()]
 
-        # ── ① 报告标题（仅保留日期行，大标题在HTML header中显示）
-        lines.append(f"报告日期：{today}（{weekday}）  生成时间：{now}")
-
         # ── ② 每日一言 ─────────────────────────────────
         lines.append("")
         lines.append("━" * 60)
@@ -539,7 +541,7 @@ class ReportAgent:
         news_list = _fetch_market_news(num=10)
         if news_list:
             for news in news_list:
-                lines.append(f"• {news}")
+                lines.append(f"◆ {news}")
         else:
             lines.append("• 暂无今日财经快讯（数据获取失败）")
 
@@ -598,10 +600,10 @@ class ReportAgent:
         else:
             lines.append("• 策略权重：放量上涨 25% + 成交额排名 25% + 多因子 25% + AI技术面 15% + 机构追踪 10%")
 
-        # ── ⑥ 股票选择 ─────────────────────────────────
+        # ── ⑥ 策略命中 Top 15 & 操作建议 ─────────────────────────────────
         lines.append("")
         lines.append("━" * 60)
-        lines.append("【股票选择】（Top 15 按综合评分降序排列）")
+        lines.append("【策略命中 Top 15 & 操作建议】")
         lines.append("━" * 60)
 
         if not results:
@@ -614,15 +616,9 @@ class ReportAgent:
             )
             total_amount = sum(r.data.amount if r.data else 0 for r in results)
 
-            lines.append("")
-            lines.append(f"• 共筛选出 {len(results)} 只优质股票")
-            lines.append(f"• 其中 {up_count} 只上涨，{len(results) - up_count} 只下跌/平盘")
-            lines.append(f"• 平均涨幅：{avg_change:+.2f}%")
-            lines.append(f"• 总成交额：{total_amount/1e8:.2f}亿")
-            lines.append("")
-            lines.append("▶ 当日策略命中 Top 15 推荐")
-            lines.append("")
+            lines.append(f"• 共筛选出 {len(results)} 只优质股票  |  上涨 {up_count} 只  |  平均 {avg_change:+.2f}%  |  总成交额 {total_amount/1e8:.2f}亿")
 
+            # Top 15 列表（统一卡片格式，无颜色边框）
             for i, result in enumerate(results[:15], 1):
                 name = result.name
                 symbol = result.symbol
@@ -642,23 +638,16 @@ class ReportAgent:
                     change_str = "N/A"
                     price_str = "N/A"
 
+                sig_str = " / ".join(result.signals[:3]) if result.signals else ""
                 lines.append(f"▶ {i}. {name}（{symbol}）  评分：{score:.1f}")
-                lines.append(f"   涨幅：{change_str}   成交额：{amount_str}   现价：{price_str}")
-                if result.signals:
-                    sig_str = " / ".join(result.signals[:4])
-                    lines.append(f"   命中策略：{sig_str}")
-                lines.append("")
+                lines.append(f"   涨幅：{change_str}  成交额：{amount_str}  现价：{price_str}  策略：{sig_str}")
 
             if len(results) > 15:
                 lines.append(f"• 还有 {len(results) - 15} 只备选股票（详见附件）")
 
-        # ── ⑦ 操作建议 ─────────────────────────────────
-        lines.append("")
-        lines.append("━" * 60)
-        lines.append("【操作建议】")
-        lines.append("━" * 60)
-
-        if results:
+            # 操作建议（5只，合并在同一样式下）
+            lines.append("")
+            lines.append("◆ 操作建议（Top 5）")
             for i, result in enumerate(results[:5], 1):
                 current_price = result.data.close if result.data else 0
                 entry_price = current_price * 0.98
@@ -675,19 +664,10 @@ class ReportAgent:
                 )
                 win_rate = min(round(base_win_rate + bonus + price_bonus, 1), 90.0)
 
-                lines.append("")
-                lines.append(f"▶ {i}. {result.name}（{result.symbol}）")
-                lines.append(f"   当前价格：{current_price:.2f}元")
-                lines.append(f"   买入参考：{entry_price:.2f}元（-2%）")
-                lines.append(f"   止损位：  {stop_loss:.2f}元（-5%）")
-                lines.append(f"   止盈位：  {take_profit:.2f}元（+8%）")
-                lines.append(f"   综合评分：{result.score:.1f}")
-                lines.append(f"   预估胜率：{win_rate:.1f}%（基于评分+策略命中数量）")
-                if result.signals:
-                    sig_lines = " / ".join(result.signals)
-                    lines.append(f"   命中策略：{sig_lines}")
+                lines.append(f"▶ {i}. {result.name}（{result.symbol}）  评分：{result.score:.1f}  胜率：{win_rate:.1f}%")
+                lines.append(f"   买入：{entry_price:.2f}元  止损：{stop_loss:.2f}元（-5%）  止盈：{take_profit:.2f}元（+8%）")
 
-        # ── ⑧ 今日总结 ─────────────────────────────────
+        # ── ⑦ 今日总结 ─────────────────────────────────
         lines.append("")
         lines.append("━" * 60)
         lines.append("【今日总结】")
