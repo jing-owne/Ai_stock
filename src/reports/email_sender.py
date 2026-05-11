@@ -630,15 +630,55 @@ class EmailSender:
         
         content_lines.append("=" * 50)
         content_lines.append("")
-        
-        # 6. 今日总结
+
+        # 6. 市场态势
+        content_lines.append("【市场态势】")
+        content_lines.append("")
+
+        try:
+            overview = self.data_fetcher.get_market_overview()
+            # 沪深300
+            if overview.get('csi300'):
+                csi = overview['csi300']
+                csi_chg = csi['change_pct']
+                arrow = "↑" if csi_chg >= 0 else "↓"
+                content_lines.append(f"📈 沪深300:  {csi_chg:+.2f}% {arrow}")
+            # 创业板指
+            if overview.get('cyb_index'):
+                cyb = overview['cyb_index']
+                cyb_chg = cyb['change_pct']
+                arrow = "↑" if cyb_chg >= 0 else "↓"
+                content_lines.append(f"📊 创业板指:  {cyb_chg:+.2f}% {arrow}")
+            # 涨跌家数
+            up_total = overview.get('up_count', 0)
+            down_total = overview.get('down_count', 0)
+            if up_total > 0 or down_total > 0:
+                total = up_total + down_total
+                up_ratio = up_total / total * 100 if total > 0 else 50
+                content_lines.append(f"📊 涨跌家数:  上涨 {up_total} 家 / 下跌 {down_total} 家 (上涨占比 {up_ratio:.0f}%)")
+            # 总成交额
+            total_amt = overview.get('total_amount', 0)
+            if total_amt > 0:
+                amt_str = f"{total_amt/1e12:.2f}万亿" if total_amt >= 1e12 else f"{total_amt/1e8:.0f}亿"
+                content_lines.append(f"💹 市场成交:  {amt_str}")
+        except Exception:
+            if stock_results:
+                up_count_all = sum(1 for s in stock_results[:15] if s.get('change_pct', 0) > 0)
+                down_count_all = sum(1 for s in stock_results[:15] if s.get('change_pct', 0) < 0)
+                content_lines.append(f"📊 涨跌家数(样本):  上涨 {up_count_all} / 下跌 {down_count_all}")
+
+        content_lines.append("")
+        content_lines.append("=" * 50)
+        content_lines.append("")
+
+        # 7. 今日总结
         content_lines.append("【今日总结】")
         content_lines.append("")
-        
+
         if stock_results:
             avg_score = sum(s.get('score', 0) for s in stock_results[:15]) / min(15, len(stock_results))
             up_count = sum(1 for s in stock_results[:15] if s.get('change_pct', 0) > 0)
-            
+
             content_lines.append(f"▶ 平均评分: {avg_score:.1f}")
             content_lines.append(f"▶ 上涨家数: {up_count} 只")
             content_lines.append(f"▶ 建议重点关注前3只股票")

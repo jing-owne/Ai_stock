@@ -6,7 +6,7 @@ import requests
 import json
 import logging
 import re
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 
 
 logger = logging.getLogger("AInvest.DataFetcher")
@@ -322,3 +322,63 @@ class DataFetcher:
         except Exception as e:
             self.logger.error(f"获取打新日历失败: {e}")
             return []
+
+    def get_market_overview(self) -> Dict[str, Any]:
+        """
+        获取市场态势总览数据（沪深300、上证指数、成交量等）
+
+        Returns:
+            dict: {
+                'csi300': {'price': float, 'change_pct': float},
+                'sh_index': {'price': float, 'change_pct': float},
+                'volume_ratio': float,   # 成交量比 (市场总成交额 vs 近期均值)
+                'up_count': int,         # 上涨家数
+                'down_count': int,       # 下跌家数
+                'total_amount': float,   # 市场总成交额
+            }
+        """
+        result = {
+            'csi300': None,
+            'sh_index': None,
+            'sz_index': None,
+            'cyb_index': None,
+            'volume_ratio': None,
+            'up_count': 0,
+            'down_count': 0,
+            'total_amount': 0,
+        }
+        try:
+            import akshare as ak
+            df = ak.stock_zh_a_spot_em()
+            if df is not None and not df.empty:
+                # 计算涨跌家数和总成交额
+                up = int((df['涨跌幅'] > 0).sum()) if '涨跌幅' in df.columns else 0
+                down = int((df['涨跌幅'] < 0).sum()) if '涨跌幅' in df.columns else 0
+                total_amt = float(df['成交额'].sum()) if '成交额' in df.columns else 0
+                result['up_count'] = up
+                result['down_count'] = down
+                result['total_amount'] = total_amt
+            self.logger.info(f"获取市场态势: 上涨{up}家, 下跌{down}家, 总成交额{total_amt/1e12:.2f}万亿")
+        except ImportError:
+            self.logger.warning("akshare未安装，无法获取市场态势数据")
+        except Exception as e:
+            self.logger.error(f"获取市场态势失败: {e}")
+
+        # 尝试获取主要指数数据
+        try:
+            import akshare as ak
+            idx_df = ak.stock_zh_index_spot_em()
+            if idx_df is not None and not idx_df.empty:
+                for idx_name, key in [('上证指数', 'sh_index'), ('深证成指', 'sz_index'),
+                                       ('沪深300', 'csi300'), ('创业板指', 'cyb_index')]:
+                    row = idx_df[idx_df['名称'] == idx_name]
+                    if not row.empty:
+                        r = row.iloc[0]
+                        result[key] = {
+                            'price': float(r.get('最新价', 0)),
+                            'change_pct': float(r.get('涨跌幅', 0)),
+                        }
+        except Exception as e:
+            self.logger.error(f"获取指数数据失败: {e}")
+
+        return result

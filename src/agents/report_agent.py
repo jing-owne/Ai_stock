@@ -231,6 +231,64 @@ class ReportAgent:
         lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         lines.append("")
 
+        # ── 市场态势 ──────────────────────────────────
+        lines.append("【市场态势】")
+        lines.append("")
+
+        # 根据市场状态确定立场
+        stance_map = {
+            "trend_up": ("🟢 激进买入", "市场处于上涨趋势，可适当增加仓位"),
+            "trend_down": ("🔴 观望防守", "市场处于下跌趋势，建议控制仓位"),
+            "volatile": ("🟡 稳健操作", "市场震荡，建议均衡配置"),
+        }
+        stance, stance_desc = stance_map.get(market_state, stance_map["volatile"]) if market_state else stance_map["volatile"]
+        lines.append(f"🎯 市场立场: {stance}")
+
+        # 获取市场宏观数据
+        try:
+            overview = fetcher.get_market_overview()
+
+            # 沪深300
+            if overview.get('csi300'):
+                csi = overview['csi300']
+                csi_chg = csi['change_pct']
+                arrow = "↑" if csi_chg >= 0 else "↓"
+                lines.append(f"📈 沪深300:  {csi_chg:+.2f}% {arrow}")
+
+            # 创业板指
+            if overview.get('cyb_index'):
+                cyb = overview['cyb_index']
+                cyb_chg = cyb['change_pct']
+                arrow = "↑" if cyb_chg >= 0 else "↓"
+                lines.append(f"📊 创业板指:  {cyb_chg:+.2f}% {arrow}")
+
+            # 涨跌家数
+            up_total = overview.get('up_count', 0)
+            down_total = overview.get('down_count', 0)
+            if up_total > 0 or down_total > 0:
+                total = up_total + down_total
+                up_ratio = up_total / total * 100 if total > 0 else 50
+                lines.append(f"📊 涨跌家数:  上涨 {up_total} 家 / 下跌 {down_total} 家 (上涨占比 {up_ratio:.0f}%)")
+
+            # 总成交额
+            total_amt = overview.get('total_amount', 0)
+            if total_amt > 0:
+                amt_str = f"{total_amt/1e12:.2f}万亿" if total_amt >= 1e12 else f"{total_amt/1e8:.0f}亿"
+                lines.append(f"💹 市场成交:  {amt_str}")
+
+        except Exception as e:
+            self.logger.warning(f"获取市场态势数据失败，使用扫描结果估算: {e}")
+            # 降级：使用扫描结果中的数据
+            if results:
+                up_count_all = sum(1 for r in results if r.data and r.data.change_pct > 0)
+                down_count_all = sum(1 for r in results if r.data and r.data.change_pct < 0)
+                lines.append(f"📊 涨跌家数(样本):  上涨 {up_count_all} / 下跌 {down_count_all}")
+
+        lines.append("")
+
+        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        lines.append("")
+
         # ── 今日总结 ──────────────────────────────────
         lines.append("【今日总结】")
         lines.append("")
