@@ -201,7 +201,7 @@ class AInvestEngine:
         """
         return {
             "status": "healthy",
-            "version": "1.0.0",
+            "version": "2.0.0",
             "timestamp": datetime.now().isoformat(),
             "config": {
                 "log_level": self.config.log_level,

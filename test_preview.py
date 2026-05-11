@@ -117,7 +117,7 @@ def main():
     # 格式化为HTML（响应式版）
     print("2. 格式化为HTML（响应式）...")
     date_str = datetime.now().strftime('%Y-%m-%d')
-    title = f"[Marcus量化选股小助手] {date_str} 动态策略报告"
+    title = f"[Marcus策略小助手] {date_str} 动态策略报告"
     html_responsive = format_email_html_responsive(summary, title)
     
     # 保存响应式预览
@@ -301,7 +301,7 @@ def generate_iphone12_preview(html_content: str, title: str):
             <p>4. 股票选择 - TOP15表格展示，统一底色</p>
             <p>5. 操作建议 - 现价/涨跌幅 + 建议买入价/止损/止盈</p>
             <p>6. 今日总结 - 综合分析和重点推荐</p>
-            <p>7. 邮件标题 - [Marcus量化选股小助手] 日期 动态策略报告</p>
+            <p>7. 邮件标题 - [Marcus策略小助手] 日期 动态策略报告</p>
             <p>8. 风险提示 - 追加量化模型免责声明</p>
             <p>9. iPhone优化 - 标题色差区分、底色优化</p>
         </div>

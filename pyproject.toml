@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ainvest"
-version = "1.0.0"
-description = "AI-driven stock quantitative analysis platform"
+version = "2.0.0"
+description = "Marcus策略小助手(AInvest) - AI驱动的量化策略选股平台"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "MIT"}

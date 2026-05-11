@@ -14,7 +14,7 @@ def get_html_template(results: List[ScanResult], analysis: MarketAnalysis = None
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AInvest 股票扫描报告</title>
+    <title>Marcus策略小助手 (AInvest) 股票扫描报告</title>
     <style>
         * {{
             margin: 0;
@@ -182,7 +182,7 @@ def get_html_template(results: List[ScanResult], analysis: MarketAnalysis = None
 <body>
     <div class="container">
         <div class="header">
-            <h1>📈 AInvest 股票扫描报告</h1>
+            <h1>📈 Marcus策略小助手 (AInvest) 股票扫描报告</h1>
             <p class="subtitle">生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
             
             <div class="stats">
@@ -262,7 +262,7 @@ def get_html_template(results: List[ScanResult], analysis: MarketAnalysis = None
         </div>
         
         <div class="footer">
-            <p>由 AInvest AI量化分析平台生成 | 仅供参考，不构成投资建议</p>
+            <p>由 Marcus策略小助手 (AInvest) 自动生成 | 仅供参考，不构成投资建议</p>
         </div>
     </div>
 </body>
