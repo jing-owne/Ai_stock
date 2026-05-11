@@ -134,12 +134,12 @@ body{{
 .hdr .dt{{font-size:12px;opacity:.8;margin-top:3px}}
 /* 内容区 */
 .body{{padding:12px 14px 16px}}
-/* 一级标题：科技蓝（比header浅，形成层次） */
+/* 一级标题：科技蓝（比header浅，形成层次），下方加间距 */
 .sec-title{{
   background:#2196F3;color:#fff;
   font-size:13px;font-weight:700;
   padding:5px 10px;border-radius:4px;
-  margin:10px 0 4px;
+  margin:10px 0 8px;
 }}
 /* 二级标题：深灰橙色文字 */
 .sub-title{{
@@ -171,7 +171,7 @@ body{{
   margin:2px 0;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }}
-/* ▶ 股票统一卡片（Top15 + 操作建议共用，去除颜色左边框，统一浅灰底） */
+/* ▶ 股票统一卡片（Top15 + 操作建议共用，统一浅灰底） */
 .card-head{{
   background:#f5f7fa;
   border-radius:6px;
@@ -179,17 +179,17 @@ body{{
   font-size:13px;font-weight:600;
   margin:4px 0 1px;
 }}
-/* 股票子行（价格/评分/信号等，统一同色底） */
+/* 股票子行（价格/评分/信号等，用更浅的底色 + 增加缩进） */
 .card-row{{
-  background:#f5f7fa;
+  background:#fafbfc;
   font-size:12px;color:#555;
-  padding:1px 10px 2px 10px;
+  padding:1px 10px 2px 20px;
   margin:0 0 2px;
   border-radius:0 0 6px 6px;
 }}
-/* 建议操作：淡橙底（与Top15浅灰区分） */
+/* 建议操作：与Top15统一浅灰底 */
 .action-head{{
-  background:#fff3e0;
+  background:#f5f7fa;
   border-radius:6px;
   padding:5px 10px;
   font-size:13px;font-weight:600;

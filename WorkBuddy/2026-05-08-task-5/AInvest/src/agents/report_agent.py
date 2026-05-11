@@ -637,7 +637,7 @@ class ReportAgent:
                 lines.append(f"   命中策略：{sig_str}")
 
             if len(results) > 15:
-                lines.append(f"• 还有 {len(results) - 15} 只备选股票（详见附件）")
+                pass
 
             # 操作建议（5只，含涨跌幅）
             lines.append("")
