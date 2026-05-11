@@ -101,19 +101,14 @@ class ReportAgent:
     ) -> str:
         """
         生成丰富的文本摘要（用于邮件发送）
-        包含：每日一言、财经动态、策略配置、股票选择、操作建议、今日总结
-        
-        Args:
-            results: 扫描结果
-            market_state: 市场状态（趋势上涨/下跌/震荡）
-            strategy_weights: 各子策略权重
+        包含：每日一言、财经动态、策略配置、建议操作(胜率Top5)、策略命中TOP15、今日总结、风险&提示(含打新日历)
         """
         from datetime import datetime as dt
         from ..data.fetcher import DataFetcher
-        
+
         lines = []
         fetcher = DataFetcher()
-        
+
         # ── 每日一言 ──────────────────────────────────
         lines.append("【每日一言】")
         lines.append("")
@@ -122,7 +117,7 @@ class ReportAgent:
         lines.append("")
         lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         lines.append("")
-        
+
         # ── 财经动态 ──────────────────────────────────
         lines.append("【财经动态】")
         lines.append("")
@@ -136,7 +131,7 @@ class ReportAgent:
         lines.append("")
         lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         lines.append("")
-        
+
         # ── 策略配置 ──────────────────────────────────
         state_map = {
             "trend_up": "上涨趋势",
@@ -144,7 +139,7 @@ class ReportAgent:
             "volatile": "震荡市",
         }
         state_desc = state_map.get(market_state, "震荡市") if market_state else "震荡市"
-        
+
         weight_descs = {
             "volume_surge": "放量上涨",
             "turnover_rank": "成交额排名",
@@ -153,7 +148,7 @@ class ReportAgent:
             "institution": "机构追踪",
         }
         w = strategy_weights or {}
-        
+
         lines.append("【策略配置】")
         lines.append("")
         lines.append(f"• 市场状态: {state_desc}（系统自动判断）")
@@ -165,68 +160,39 @@ class ReportAgent:
         lines.append("")
         lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         lines.append("")
-        
-        # ── 股票选择（统一底色，去除换行色块） ────────────
-        lines.append("【股票选择】")
+
+        # ── 建议操作-胜率排行Top5 ──────────────────────
+        lines.append("【建议操作-胜率排行Top5】")
         lines.append("")
-        lines.append("策略命中的TOP15：")
-        lines.append("")
-        
+
         if not results:
             lines.append("今日暂无符合条件的股票。")
         else:
-            up_count = sum(1 for r in results if r.data and r.data.change_pct > 0)
-            avg_change = sum(r.data.change_pct if r.data else 0 for r in results) / len(results) if results else 0
-            total_amount = sum(r.data.amount if r.data else 0 for r in results)
-            
-            lines.append(f"共筛选出 {len(results)} 只股票，其中 {up_count} 只上涨，平均涨幅 {avg_change:+.2f}%，总成交额 {total_amount/1e8:.2f}亿")
-            lines.append("")
-            
-            # TOP15表格
-            lines.append("| 排名 | 股票 | 代码 | 评分 | 现价 | 涨跌幅 | 成交额 | 命中策略 |")
-            lines.append("|:---:|:---|:---|:---:|:---:|:---:|:---:|:---|")
-            for i, result in enumerate(results[:15], 1):
-                if result.data:
-                    change_pct = result.data.change_pct
-                    amount = result.data.amount
-                    amount_str = f"{amount/1e8:.2f}亿" if amount >= 1e8 else f"{amount/1e4:.0f}万"
-                    change_str = f"{change_pct:+.2f}%"
-                    price_str = f"{result.data.close:.2f}"
-                else:
-                    amount_str = "N/A"
-                    change_str = "N/A"
-                    price_str = "N/A"
-                
-                sig_str = " / ".join(result.signals[:3]) if result.signals else "-"
-                lines.append(f"| {i} | {result.name} | {result.symbol} | {result.score:.1f} | {price_str} | {change_str} | {amount_str} | {sig_str} |")
-        
-        lines.append("")
-        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        lines.append("")
-        
-        # ── 操作建议（现价/涨跌幅一行，买入/止损/止盈一行） ──
-        lines.append("【操作建议】")
-        lines.append("")
-        
-        if results:
-            for i, result in enumerate(results[:5], 1):
+            # 按胜率排序取 Top5
+            scored_results = []
+            for result in results[:15]:
+                score = result.score
+                sig_count = len(result.signals)
+                change_pct = result.data.change_pct if result.data else 0
+                base_win_rate = 50 + (score - 60) / 40 * 30 if score >= 60 else 50
+                bonus = min(sig_count * 3, 15)
+                price_bonus = min(max(change_pct, 0) * 0.5, 5)
+                win_rate = min(round(base_win_rate + bonus + price_bonus, 1), 90.0)
+                scored_results.append((result, win_rate))
+
+            scored_results.sort(key=lambda x: -x[1])
+            top5 = scored_results[:5]
+
+            for i, (result, win_rate) in enumerate(top5, 1):
                 current_price = result.data.close if result.data else 0
                 change_pct = result.data.change_pct if result.data else 0
                 suggest_buy_price = current_price * 0.98
                 stop_loss = current_price * 0.95
                 take_profit = current_price * 1.08
-                
-                # 胜率估算
-                score = result.score
-                sig_count = len(result.signals)
-                base_win_rate = 50 + (score - 60) / 40 * 30 if score >= 60 else 50
-                bonus = min(sig_count * 3, 15)
-                price_bonus = min(max(change_pct, 0) * 0.5, 5)
-                win_rate = min(round(base_win_rate + bonus + price_bonus, 1), 90.0)
-                
+
                 change_str = f"{change_pct:+.2f}%"
                 sig_str = " / ".join(result.signals[:3]) if result.signals else "-"
-                
+
                 # 第1行：股票名称
                 lines.append(f"▶ {i}. {result.name}（{result.symbol}）评分：{result.score:.1f} | 预估胜率：{win_rate:.1f}%")
                 # 第2行：现价 + 涨跌幅
@@ -236,38 +202,68 @@ class ReportAgent:
                 # 第4行：命中策略
                 lines.append(f"   命中策略：{sig_str}")
                 lines.append("")
-        
+
         lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         lines.append("")
-        
+
+        # ── 策略命中TOP15 ─────────────────────────────
+        lines.append("【策略命中TOP15】")
+        lines.append("")
+
+        if results:
+            for i, result in enumerate(results[:15], 1):
+                current_price = result.data.close if result.data else 0
+                change_pct = result.data.change_pct if result.data else 0
+                amount = result.data.amount if result.data else 0
+                change_str = f"{change_pct:+.2f}%"
+                amount_str = f"{amount/1e8:.2f}亿" if amount >= 1e8 else f"{amount/1e4:.0f}万" if amount > 0 else "N/A"
+                sig_str = " / ".join(result.signals[:3]) if result.signals else "-"
+
+                lines.append(f"▶ {i}. {result.name}（{result.symbol}）评分：{result.score:.1f}")
+                lines.append(f"   现价：{current_price:.2f}元 | 涨跌幅：{change_str} | 成交额：{amount_str}")
+                lines.append(f"   命中策略：{sig_str}")
+                lines.append("")
+
+        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        lines.append("")
+
         # ── 今日总结 ──────────────────────────────────
         lines.append("【今日总结】")
         lines.append("")
-        
+
         if results:
+            up_count = sum(1 for r in results if r.data and r.data.change_pct > 0)
             avg_score = sum(r.score for r in results[:15]) / min(15, len(results)) if results else 0
             top3 = results[:3]
             top3_names = "、".join([f"{r.name}({r.score:.1f}分)" for r in top3])
-            
+
             lines.append(f"▶ 今日综合策略共筛选出 {len(results[:15])} 只优质股票")
             lines.append(f"▶ 平均评分：{avg_score:.1f}分，上涨家数：{up_count} 只")
             lines.append(f"▶ 重点推荐：{top3_names}")
             lines.append(f"▶ 建议：逢低关注前3只股票，设置好止损位")
-        
+
         lines.append("")
         lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         lines.append("")
-        
-        # ── 风险提示 ──────────────────────────────────
-        lines.append("【风险提示】")
+
+        # ── 风险&提示（含打新日历） ─────────────────────
+        lines.append("【风险&提示】")
         lines.append("")
         lines.append("• 以上仅供参考，不构成投资建议")
         lines.append("• 股市有风险，投资需谨慎")
         lines.append("• 建议分散持仓，单只仓位不超过总资金的20%")
         lines.append("• 必须设置止损位（建议-5%），严格执行")
-        lines.append("• 量化模型有局限性，请结合个人判断决策")
-        lines.append("• 所有分析结果基于技术面量化模型，不保证准确性。用户应根据自身判断和风险承受能力做出独立投资决策。")
-        
+        lines.append("")
+
+        # 打新日历
+        ipo_list = fetcher.get_ipo_calendar(max_days=7)
+        if ipo_list:
+            lines.append(f"📋 近期打新日历（未来7天）：")
+            for ipo in ipo_list:
+                lines.append(f"  • {ipo['apply_date']}  {ipo['stock_name']}（{ipo['stock_code']}）申购代码：{ipo['apply_code']} | 发行价：{ipo['price']} | 顶格市值：{ipo['market_cap_needed']}万")
+        else:
+            lines.append("📋 近7天暂无新股申购安排")
+
         return '\n'.join(lines)
     
     def send_email(

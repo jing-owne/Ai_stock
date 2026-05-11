@@ -248,3 +248,77 @@ class DataFetcher:
                 unique_news.append(news)
         
         return unique_news[:15]  # 最多返回15条
+
+    def get_ipo_calendar(self, max_days: int = 7) -> List[Dict]:
+        """
+        获取近期新股申购日历（通过akshare）
+
+        Args:
+            max_days: 最多显示未来几天的可申购新股
+
+        Returns:
+            新股申购列表，每项包含: stock_code, stock_name, apply_date,
+            apply_code, price, pe, industry_pe, max_shares, market_cap_needed
+        """
+        try:
+            import akshare as ak
+            from datetime import datetime, timedelta
+
+            df = ak.stock_ipo_ths()
+            if df is None or df.empty:
+                return []
+
+            today = datetime.now().date()
+            cutoff = today + timedelta(days=max_days)
+
+            ipo_list = []
+            for _, row in df.iterrows():
+                apply_date_str = str(row.get('申购日期', ''))
+                if not apply_date_str or apply_date_str == '-' or apply_date_str == 'nan':
+                    continue
+
+                # 解析申购日期，支持 "05-13 周三" 和 "2026-05-07" 两种格式
+                try:
+                    if '-' in apply_date_str and '周' in apply_date_str:
+                        # "05-13 周三" 格式，补全年份
+                        date_part = apply_date_str.split(' ')[0]
+                        parsed_date = datetime.strptime(f"{today.year}-{date_part}", "%Y-%m-%d").date()
+                    else:
+                        parsed_date = datetime.strptime(apply_date_str[:10], "%Y-%m-%d").date()
+                except (ValueError, IndexError):
+                    continue
+
+                # 只取今天之后 max_days 天内的新股
+                if parsed_date < today or parsed_date > cutoff:
+                    continue
+
+                stock_code = str(row.get('股票代码', ''))
+                stock_name = str(row.get('股票简称', ''))
+                apply_code = str(row.get('申购代码', ''))
+                price = str(row.get('发行价格', '-'))
+                pe = str(row.get('发行市盈率', '-'))
+                industry_pe = str(row.get('行业市盈率', '-'))
+                max_shares = str(row.get('申购上限（万股）', '-'))
+                market_cap = str(row.get('顶格申购需配市值（万元）', '-'))
+
+                ipo_list.append({
+                    'stock_code': stock_code,
+                    'stock_name': stock_name,
+                    'apply_date': apply_date_str.split(' ')[0] if ' ' in apply_date_str else apply_date_str[:10],
+                    'apply_code': apply_code,
+                    'price': price if price != '-' and price != 'nan' else '待定',
+                    'pe': pe if pe != '-' and pe != 'nan' else '待定',
+                    'industry_pe': industry_pe if industry_pe != '-' and industry_pe != 'nan' else '-',
+                    'max_shares': max_shares if max_shares != 'nan' else '-',
+                    'market_cap_needed': market_cap if market_cap != 'nan' else '-',
+                })
+
+            self.logger.info(f"获取打新日历: 未来{max_days}天共{len(ipo_list)}只新股可申购")
+            return ipo_list
+
+        except ImportError:
+            self.logger.warning("akshare未安装，无法获取打新日历。请执行: pip install akshare")
+            return []
+        except Exception as e:
+            self.logger.error(f"获取打新日历失败: {e}")
+            return []
