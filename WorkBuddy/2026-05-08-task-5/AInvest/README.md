@@ -1,10 +1,10 @@
-# Marcus量化选股系统 v1.5.0
+# Marcus量化选股小助手 v1.5.0
 
 > **模块化AI量化分析平台**，基于Agent架构设计，支持多策略选股、市场分析、报告生成与自动推送。
 
 ## 📌 项目描述
 
-**AInvest** 是一套基于 **Agent架构** 的AI量化选股系统，综合放量上涨、多因子评分、AI技术面分析、机构追踪等多种策略，通过模块化设计实现灵活扩展。
+**AInvest** 是一套基于 **Agent架构** 的AI量化选股小助手，综合放量上涨、多因子评分、AI技术面分析、机构追踪等多种策略，通过模块化设计实现灵活扩展。
 
 ### 核心特性
 
@@ -158,7 +158,7 @@ email:
 ## 📋 报告示例
 
 ```
-【Marcus量化选股系统】
+【Marcus量化选股小助手】
 扫描完成: volume_surge
 
  1. 浪莎股份(600137) - 评分: 88.5
@@ -198,4 +198,4 @@ email:
 ## 📚 相关项目
 
 - [Marcus-A-Trading-Assistant](https://github.com/jing-owne/Marcus-A-Trading-Assistant) - Marcus A股交易助手
-- [ai_stock_selector](https://github.com/jing-owne/ai_stock_selector) - 多策略选股系统
+- [ai_stock_selector](https://github.com/jing-owne/ai_stock_selector) - 多策略选股小助手
