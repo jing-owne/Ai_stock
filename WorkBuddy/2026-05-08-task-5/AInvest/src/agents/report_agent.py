@@ -633,15 +633,15 @@ class ReportAgent:
 
                 sig_str = " / ".join(result.signals[:3]) if result.signals else ""
                 lines.append(f"▶ {i}. {name}（{symbol}）  评分：{score:.1f}")
-                lines.append(f"    涨幅：{change_str}  成交额：{amount_str}  现价：{price_str}")
-                lines.append(f"    命中策略：{sig_str}")
+                lines.append(f"   涨幅：{change_str}  成交额：{amount_str}  现价：{price_str}")
+                lines.append(f"   命中策略：{sig_str}")
 
             if len(results) > 15:
                 lines.append(f"• 还有 {len(results) - 15} 只备选股票（详见附件）")
 
             # 操作建议（5只，含涨跌幅）
             lines.append("")
-            lines.append("◆ 操作建议（Top 5）")
+            lines.append("【建议操作 TOP5】")
             for i, result in enumerate(results[:5], 1):
                 current_price = result.data.close if result.data else 0
                 change_pct = result.data.change_pct if result.data else 0
@@ -659,8 +659,9 @@ class ReportAgent:
                 )
                 win_rate = min(round(base_win_rate + bonus + price_bonus, 1), 90.0)
 
-                lines.append(f"▶ {i}. {result.name}（{result.symbol}）  评分：{result.score:.1f}  胜率：{win_rate:.1f}%")
-                lines.append(f"    现价：{current_price:.2f}元（{change_str}）  买入：{entry_price:.2f}元  止损：{stop_loss:.2f}元（-5%）  止盈：{take_profit:.2f}元（+8%）")
+                lines.append(f"▌ {i}. {result.name}（{result.symbol}）  评分：{result.score:.1f}  胜率：{win_rate:.1f}%")
+                lines.append(f"   现价：{current_price:.2f}元（{change_str}）")
+                lines.append(f"   建议买入：{entry_price:.2f}元  止损：{stop_loss:.2f}元（-5%）  止盈：{take_profit:.2f}元（+8%）")
 
         # ── ⑦ 今日总结 ─────────────────────────────────
         lines.append("")

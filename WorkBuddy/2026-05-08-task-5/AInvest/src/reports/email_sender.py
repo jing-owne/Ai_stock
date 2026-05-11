@@ -81,6 +81,13 @@ def format_email_html(content: str, title: str = "Marcus量化选股报告") -> 
             html_lines.append(f'<div class="bullet">• {text}</div>')
             continue
 
+        # ── 建议操作行 ▌ 开头（淡橙底，与Top15浅灰区分）
+        if line_stripped.startswith('▌'):
+            text = line_stripped[1:].strip()
+            text = _highlight(text)
+            html_lines.append(f'<div class="action-head">{text}</div>')
+            continue
+
         # ── ▶ 股票/操作卡片（Top15 + 操作建议，统一背景）
         if line_stripped.startswith('▶'):
             text = line_stripped[1:].strip()
@@ -179,6 +186,14 @@ body{{
   padding:1px 10px 2px 10px;
   margin:0 0 2px;
   border-radius:0 0 6px 6px;
+}}
+/* 建议操作：淡橙底（与Top15浅灰区分） */
+.action-head{{
+  background:#fff3e0;
+  border-radius:6px;
+  padding:5px 10px;
+  font-size:13px;font-weight:600;
+  margin:4px 0 1px;
 }}
 /* 普通文本行 */
 .row{{
