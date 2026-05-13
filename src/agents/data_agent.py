@@ -178,6 +178,10 @@ class DataAgent:
             if close <= 0:
                 return None
 
+            # 过滤股价>100元
+            if close > 100:
+                return None
+
             # 过滤规则
             if "ST" in name:
                 return None
@@ -312,6 +316,8 @@ class DataAgent:
                         pct = float(last[8])
                         amount = float(last[6])  # 元
 
+                        if close <= 0 or close > 100:
+                            continue
                         if pct >= 8.0 or amount < 30000000:
                             continue
 
