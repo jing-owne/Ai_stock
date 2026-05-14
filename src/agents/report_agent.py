@@ -191,7 +191,13 @@ class ReportAgent:
                 take_profit = current_price * 1.08
 
                 change_str = f"{change_pct:+.2f}%"
-                sig_str = " / ".join(result.signals[:3]) if result.signals else "-"
+
+                # 从 metadata 中获取命中策略名称
+                hit_strategies = result.metadata.get("hit_strategies", [])
+                if hit_strategies:
+                    strategy_str = " / ".join(hit_strategies)
+                else:
+                    strategy_str = " / ".join(result.signals[:3]) if result.signals else "-"
 
                 # 第1行：股票名称 + 预估胜率
                 lines.append(f"▶ {i}. {result.name}（{result.symbol}）   预估胜率：<strong style='color:#DC2626;font-weight:bold;'>{win_rate:.1f}%</strong>")
@@ -200,7 +206,7 @@ class ReportAgent:
                 # 第3行：止盈止损
                 lines.append(f"   止损：{stop_loss:.2f}元（-5%）  止盈：{take_profit:.2f}元（+8%）")
                 # 第4行：命中策略
-                lines.append(f"   命中策略：{sig_str}")
+                lines.append(f"   命中策略：{strategy_str}")
                 lines.append("")
 
         lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -218,14 +224,21 @@ class ReportAgent:
                 score = result.score
                 change_str = f"{change_pct:+.2f}%"
                 amount_str = f"{amount/1e8:.2f}亿" if amount >= 1e8 else f"{amount/1e4:.0f}万" if amount > 0 else "N/A"
-                sig_str = " / ".join(result.signals[:3]) if result.signals else "-"
+
+                # 从 metadata 中获取命中策略名称
+                hit_strategies = result.metadata.get("hit_strategies", [])
+                strategy_count = result.metadata.get("strategy_count", 0)
+                if hit_strategies:
+                    strategy_str = " / ".join(hit_strategies)
+                else:
+                    strategy_str = " / ".join(result.signals[:3]) if result.signals else "-"
 
                 # 第1行：股票名称 + 成交额
                 lines.append(f"▶ {i}. {result.name}（{result.symbol}）  成交额：{amount_str}")
                 # 第2行：评分 + 现价(涨跌幅)
                 lines.append(f"   评分：{score:.1f}分  现价：{current_price:.2f}元 ({change_str})")
                 # 第3行：命中策略
-                lines.append(f"   命中策略：{sig_str}")
+                lines.append(f"   命中策略：{strategy_str}（{strategy_count}个策略命中）")
                 lines.append("")
 
         lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")

@@ -155,7 +155,13 @@ class ReportGenerator:
             else:
                 change_str = "N/A"
                 amt_str = "N/A"
-            sigs = " / ".join(r.signals[:3]) if r.signals else "-"
+            # 优先展示命中策略名称
+            hit_strategies = r.metadata.get("hit_strategies", [])
+            strategy_count = r.metadata.get("strategy_count", 0)
+            if hit_strategies:
+                sigs = " / ".join(hit_strategies) + f"（{strategy_count}策略）"
+            else:
+                sigs = " / ".join(r.signals[:3]) if r.signals else "-"
             lines.append(
                 f"| {i} | {r.name} | `{r.symbol}` | **{r.score:.1f}** | {change_str} | {amt_str} | {sigs} |"
             )

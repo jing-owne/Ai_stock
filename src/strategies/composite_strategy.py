@@ -457,16 +457,24 @@ class CompositeStrategy(BaseStrategy):
         sub_results: Dict[str, Dict[str, ScanResult]],
         weights: Dict[str, float]
     ) -> Dict[str, float]:
-        """计算每只股票的综合评分 = Σ(子策略评分 × 权重)"""
+        """计算每只股票的综合评分 = Σ(子策略评分 × 权重) + 策略数量加分"""
         scores = {}
+        STRATEGY_NAMES = {
+            "volume_surge": "放量上涨",
+            "turnover_rank": "成交额排名",
+            "multi_factor": "多因子",
+            "ai_technical": "AI技术面",
+            "institution": "机构追踪",
+        }
         for symbol, strategies in sub_results.items():
-            total, total_weight = 0.0, 0.0
+            total = 0.0
             for sname, result in strategies.items():
                 w = weights.get(sname, 0.0)
                 total += min(result.score, 100) * w
-                total_weight += w
-            if total_weight > 0:
-                scores[symbol] = round(total / total_weight, 2)
+            # 策略数量加分：被更多策略命中说明共识更强
+            count = len(strategies)
+            diversity_bonus = min(count * 2.0, 8.0)  # 最多8分加分
+            scores[symbol] = round(total + diversity_bonus, 2)
         return scores
 
     # ─────────────────────────────────────────────
@@ -534,32 +542,46 @@ class CompositeStrategy(BaseStrategy):
         sub_results: Dict[str, Dict[str, ScanResult]]
     ) -> List[ScanResult]:
         """将综合评分转换为 ScanResult 列表"""
+        STRATEGY_NAMES = {
+            "volume_surge": "放量上涨",
+            "turnover_rank": "成交额排名",
+            "multi_factor": "多因子",
+            "ai_technical": "AI技术面",
+            "institution": "机构追踪",
+        }
         results = []
         for symbol in filtered_symbols:
             if symbol not in stock_scores:
                 continue
             score = stock_scores[symbol]
+            strat_map = sub_results.get(symbol, {})
 
+            # 收集所有信号
             all_signals = []
-            strategy_count = 0
-            for sname, result in sub_results.get(symbol, {}).items():
+            # 收集命中策略名称
+            hit_strategies = []
+            for sname, result in strat_map.items():
                 all_signals.extend(result.signals)
-                strategy_count += 1
+                hit_strategies.append(STRATEGY_NAMES.get(sname, sname))
+
+            # 把命中策略名称作为前缀信号，方便报告展示
+            strategy_signal = "+".join(hit_strategies)
 
             metadata = {
                 "composite_score": score,
-                "strategy_count": strategy_count,
+                "strategy_count": len(strat_map),
+                "hit_strategies": hit_strategies,
             }
-            for sname, result in sub_results.get(symbol, {}).items():
+            for sname, result in strat_map.items():
                 metadata[f"{sname}_score"] = result.score
 
             results.append(ScanResult(
                 symbol=symbol,
-                name=next((r.data.name for r in sub_results.get(symbol, {}).values() if r.data), symbol),
+                name=next((r.data.name for r in strat_map.values() if r.data), symbol),
                 strategy=StrategyType.COMPOSITE,
                 score=score,
-                signals=list(set(all_signals))[:5],
-                data=next((r.data for r in sub_results.get(symbol, {}).values() if r.data), None),
+                signals=[strategy_signal] + list(set(all_signals))[:4],
+                data=next((r.data for r in strat_map.values() if r.data), None),
                 metadata=metadata
             ))
         return results
