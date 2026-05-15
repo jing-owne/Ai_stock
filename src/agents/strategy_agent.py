@@ -139,25 +139,38 @@ class StrategyAgent:
     ) -> Dict[str, Any]:
         """
         回测策略表现
-        
+
+        当前版本: 基于策略历史表现统计的框架回测
+        TODO: 接入真实K线数据逐日模拟回测
+
         Args:
             strategy_type: 策略类型
             start_date: 开始日期
             end_date: 结束日期
-            
+
         Returns:
             回测结果
         """
         self.logger.info(f"回测策略: {strategy_type.value} ({start_date} - {end_date})")
-        
-        # 简化回测实现
+
+        # 计算回测天数
+        from datetime import datetime
+        try:
+            d1 = datetime.strptime(start_date, "%Y-%m-%d")
+            d2 = datetime.strptime(end_date, "%Y-%m-%d")
+            trading_days = max(1, int((d2 - d1).days * 5 / 7))  # 粗略估算交易日
+        except ValueError:
+            trading_days = 30
+
         return {
             "strategy": strategy_type.value,
             "start_date": start_date,
             "end_date": end_date,
-            "total_return": round(15.5, 2),
-            "win_rate": round(62.3, 2),
-            "max_drawdown": round(-8.5, 2),
-            "sharpe_ratio": round(1.8, 2),
-            "total_trades": 45,
+            "trading_days": trading_days,
+            "total_return": None,       # TODO: 基于真实回测
+            "win_rate": None,           # TODO: 基于真实回测
+            "max_drawdown": None,       # TODO: 基于真实回测
+            "sharpe_ratio": None,       # TODO: 基于真实回测
+            "total_trades": None,       # TODO: 基于真实回测
+            "note": "回测框架已搭建，待接入真实K线逐日模拟",
         }

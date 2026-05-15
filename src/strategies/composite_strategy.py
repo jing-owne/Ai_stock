@@ -13,12 +13,13 @@
 - 可选：PE/PB筛选（需配置第三方数据源）
 """
 
-from typing import List, Dict, Any
-import random
+from typing import List, Dict, Any, Optional
 import logging
 
 from .base import BaseStrategy
 from ..core.types import StockData, ScanResult, StrategyType
+from ..core.indicators import calc_all_indicators, calc_technical_score, calc_pattern_score, calc_trend_score
+from ..data.kline_fetcher import KlineFetcher
 
 
 # 市场状态 → 动态权重
@@ -73,11 +74,15 @@ def detect_market_state(market_data: List[StockData]) -> str:
 class CompositeStrategy(BaseStrategy):
     """综合策略：多策略加权 + 动态权重 + 可选基本面过滤"""
 
-    def __init__(self):
+    def __init__(self, kline_fetcher: Optional[KlineFetcher] = None):
         super().__init__()
         self.logger = logging.getLogger("AInvest.CompositeStrategy")
         self._last_market_state: str = "volatile"
         self._last_weights: Dict[str, float] = {}
+        self._kline_fetcher = kline_fetcher or KlineFetcher(max_workers=10)
+        # 缓存K线数据和技术指标，避免重复获取
+        self._kline_cache: Dict[str, List[StockData]] = {}
+        self._indicator_cache: Dict[str, Dict[str, float]] = {}
 
     @property
     def name(self) -> str:
@@ -191,12 +196,39 @@ class CompositeStrategy(BaseStrategy):
     # 子策略执行
     # ─────────────────────────────────────────────
 
+    def _prefetch_kline_and_indicators(self, market_data: List[StockData]) -> None:
+        """预获取K线数据并计算技术指标（并发，漏斗前置）"""
+        # 收集所有需要K线的股票代码
+        symbols = list({s.symbol for s in market_data if s.change_pct > 0 and s.amount >= 100_000_000})
+        self.logger.info(f"预获取 {len(symbols)} 只股票K线数据...")
+
+        # 并发获取K线
+        self._kline_cache = self._kline_fetcher.fetch_batch(symbols, days=60)
+
+        # 计算技术指标
+        import numpy as np
+        calc_count = 0
+        for symbol, kline_list in self._kline_cache.items():
+            arrays = self._kline_fetcher.get_numpy_arrays(kline_list)
+            if arrays:
+                indicators = calc_all_indicators(
+                    arrays["close"], arrays["volume"],
+                    arrays["high"], arrays["low"]
+                )
+                self._indicator_cache[symbol] = indicators
+                calc_count += 1
+
+        self.logger.info(f"技术指标计算完成: {calc_count} 只股票")
+
     def _execute_sub_strategies(
         self,
         market_data: List[StockData],
         params: Dict[str, Any]
     ) -> Dict[str, Dict[str, ScanResult]]:
         """执行5个子策略，返回 {symbol: {strategy_name: result}}"""
+        # 预获取K线并计算指标（一次性并发，供多策略共用）
+        self._prefetch_kline_and_indicators(market_data)
+
         sub_results: Dict[str, Dict[str, ScanResult]] = {}
 
         for result in self._execute_volume_surge(market_data, params):
@@ -217,7 +249,7 @@ class CompositeStrategy(BaseStrategy):
         return sub_results
 
     def _execute_volume_surge(self, market_data, params) -> List[ScanResult]:
-        """放量上涨策略"""
+        """放量上涨策略 — 使用真实5日均量比"""
         cfg = params.get("volume_surge", {}) if params else {}
         min_ratio = cfg.get("min_volume_ratio", 2.0)
         min_change = cfg.get("min_price_change", 1.0)
@@ -229,7 +261,15 @@ class CompositeStrategy(BaseStrategy):
         for stock in market_data:
             if stock.change_pct < min_change or stock.amount < min_amount:
                 continue
-            volume_ratio = random.uniform(1.5, 4.0)
+
+            # 从K线指标缓存获取真实放量倍数
+            indicators = self._indicator_cache.get(stock.symbol)
+            if indicators and "volume_ratio" in indicators:
+                volume_ratio = indicators["volume_ratio"]
+            else:
+                # 无K线数据，跳过（无法计算真实放量）
+                continue
+
             if volume_ratio < min_ratio:
                 continue
 
@@ -302,12 +342,12 @@ class CompositeStrategy(BaseStrategy):
         return results
 
     def _execute_multi_factor(self, market_data, params) -> List[ScanResult]:
-        """多因子策略"""
+        """多因子策略 — 技术因子使用真实指标计算"""
         cfg = params.get("multi_factor", {}) if params else {}
-        v_weight = cfg.get("volume_weight", 0.25)
+        v_weight = cfg.get("volume_weight", 0.20)
         p_weight = cfg.get("price_weight", 0.25)
-        t_weight = cfg.get("turnover_weight", 0.25)
-        tech_weight = cfg.get("tech_weight", 0.25)
+        t_weight = cfg.get("turnover_weight", 0.20)
+        tech_weight = cfg.get("tech_weight", 0.35)
         min_score = cfg.get("min_score", 50)
 
         max_amount = max((s.amount for s in market_data), default=1)
@@ -315,11 +355,19 @@ class CompositeStrategy(BaseStrategy):
 
         results = []
         for stock in market_data:
+            # 从指标缓存获取真实技术面评分
+            indicators = self._indicator_cache.get(stock.symbol)
+            if indicators:
+                technical = calc_technical_score(indicators)
+            else:
+                # 无K线数据，使用保守低分
+                technical = 40.0
+
             factors = {
                 "volume": (stock.amount / max_amount) * 100,
                 "price": max(0, min(stock.change_pct / max_change * 100, 100)),
                 "turnover": min(stock.turn_rate * 10, 100),
-                "technical": random.uniform(60, 90),
+                "technical": technical,
             }
             total = (
                 factors["volume"] * v_weight +
@@ -336,6 +384,8 @@ class CompositeStrategy(BaseStrategy):
                 signals.append("量能充沛" + sfx)
             if factors["price"] >= 80:
                 signals.append("涨幅领先" + sfx)
+            if technical >= 70:
+                signals.append("技术面强势" + sfx)
 
             results.append(ScanResult(
                 symbol=stock.symbol,
@@ -351,21 +401,20 @@ class CompositeStrategy(BaseStrategy):
         return results
 
     def _execute_ai_technical(self, market_data, params) -> List[ScanResult]:
-        """AI技术面策略（模拟）"""
+        """AI技术面策略 — 基于真实技术指标计算形态和趋势评分"""
         cfg = params.get("ai_technical", {}) if params else {}
         threshold = cfg.get("pattern_threshold", 0.75) * 100
 
         results = []
         for stock in market_data:
-            pattern_score = random.uniform(60, 95)
-            trend_score = random.uniform(55, 90)
+            indicators = self._indicator_cache.get(stock.symbol)
+            if not indicators:
+                continue  # 无K线数据，无法评估
 
-            if stock.change_pct > 2:
-                pattern_score += 5
-            if stock.volume > 50_000_000:
-                pattern_score += 3
-            if stock.change_pct > 0:
-                trend_score += 5
+            # 使用真实技术指标计算形态评分和趋势评分
+            volume_ratio = indicators.get("volume_ratio", 1.0)
+            pattern_score = calc_pattern_score(indicators, volume_ratio)
+            trend_score = calc_trend_score(indicators)
 
             pattern_score = min(pattern_score, 100)
             trend_score = min(trend_score, 100)
@@ -382,6 +431,8 @@ class CompositeStrategy(BaseStrategy):
                 signals.append("AI形态良好" + sfx)
             if trend_score >= 80:
                 signals.append("上升趋势确认" + sfx)
+            if indicators.get("macd_golden_cross"):
+                signals.append("MACD金叉" + sfx)
 
             results.append(ScanResult(
                 symbol=stock.symbol,
@@ -393,6 +444,8 @@ class CompositeStrategy(BaseStrategy):
                 metadata={
                     "pattern_score": round(pattern_score, 1),
                     "trend_score": round(trend_score, 1),
+                    "rsi14": round(indicators.get("rsi14", 0), 1),
+                    "volume_ratio": round(volume_ratio, 2),
                 }
             ))
 
@@ -400,36 +453,71 @@ class CompositeStrategy(BaseStrategy):
         return results
 
     def _execute_institution(self, market_data, params) -> List[ScanResult]:
-        """机构追踪策略（模拟）"""
+        """机构追踪策略 — 基于成交额+换手率+涨跌幅的代理指标
+
+        注: 真实机构持股数据需接入东财机构持股接口(后续迭代)
+        当前使用以下代理指标替代 random:
+        - 大额成交(成交额排名靠前) → 可能有大资金参与
+        - 换手率适中 → 机构持仓通常换手率较低
+        - 连续上涨 → 可能是机构建仓推动
+        """
         cfg = params.get("institution", {}) if params else {}
-        min_count = cfg.get("min_inst_count", 3)
-        min_ratio = cfg.get("min_inst_ratio", 0.05)
 
         results = []
-        for stock in market_data:
-            inst_count = random.randint(1, 10)
-            inst_ratio = random.uniform(0.02, 0.15)
-            inst_change = random.uniform(-5, 10)
+        max_amount = max((s.amount for s in market_data), default=1)
 
-            if inst_count < min_count or inst_ratio < min_ratio:
+        for stock in market_data:
+            if stock.amount < 200_000_000:  # 成交额至少2亿，小股票机构不太参与
                 continue
 
-            count_score = min(inst_count * 3, 30)
-            ratio_score = min(inst_ratio * 200, 30)
-            change_score = max(10 + inst_change * 2, 0) if inst_change > 0 else max(10 + inst_change, 0)
-            price_score = min(max(stock.change_pct * 4, 0), 20)
-            score = round(count_score + ratio_score + change_score + price_score, 1)
+            # 代理指标: 用可观测数据推断机构行为
+            amount_rank_score = min(stock.amount / max_amount * 40, 40)  # 成交额越大，大资金越可能参与
+
+            # 换手率评分: 机构股换手率通常在1%-5%之间
+            turn_rate = stock.turn_rate
+            if 1.0 <= turn_rate <= 5.0:
+                turn_score = 25  # 典型机构股换手率
+            elif 0.5 <= turn_rate < 1.0:
+                turn_score = 20  # 低换手，机构锁仓
+            elif 5.0 < turn_rate <= 8.0:
+                turn_score = 15  # 稍高，可能有游资
+            else:
+                turn_score = 5   # 过高过低都不太像机构股
+
+            # 涨幅评分: 温和上涨更符合机构建仓
+            if 0.5 <= stock.change_pct <= 4.0:
+                price_score = 20  # 温和上涨
+            elif 4.0 < stock.change_pct <= 7.0:
+                price_score = 15  # 较强
+            elif stock.change_pct > 0:
+                price_score = 10  # 微涨
+            else:
+                price_score = 0   # 下跌
+
+            # 技术面加分: MACD金叉/均线多头 = 机构可能已完成建仓
+            indicators = self._indicator_cache.get(stock.symbol)
+            tech_bonus = 0
+            if indicators:
+                if indicators.get("macd_golden_cross"):
+                    tech_bonus += 10
+                if indicators.get("ma_bullish_align"):
+                    tech_bonus += 5
+
+            score = round(amount_rank_score + turn_score + price_score + tech_bonus, 1)
+
+            if score < 30:  # 低分不推荐
+                continue
 
             signals = []
             sfx = "「机构」"
-            if inst_count >= 7:
-                signals.append("多家机构重仓" + sfx)
-            elif inst_count >= 4:
-                signals.append("机构关注" + sfx)
-            if inst_change >= 5:
-                signals.append("机构大幅增持" + sfx)
-            elif inst_change >= 2:
-                signals.append("机构温和增持" + sfx)
+            if amount_rank_score >= 30:
+                signals.append("大额成交" + sfx)
+            if turn_score >= 20:
+                signals.append("机构换手率特征" + sfx)
+            if price_score >= 15:
+                signals.append("温和上涨建仓" + sfx)
+            if tech_bonus >= 10:
+                signals.append("技术面确认" + sfx)
 
             results.append(ScanResult(
                 symbol=stock.symbol,
@@ -439,9 +527,11 @@ class CompositeStrategy(BaseStrategy):
                 signals=signals,
                 data=stock,
                 metadata={
-                    "inst_count": inst_count,
-                    "inst_ratio": round(inst_ratio * 100, 2),
-                    "inst_change": round(inst_change, 2),
+                    "amount_rank_score": round(amount_rank_score, 1),
+                    "turn_score": turn_score,
+                    "price_score": price_score,
+                    "tech_bonus": tech_bonus,
+                    "note": "代理指标，非真实机构数据",
                 }
             ))
 
@@ -515,21 +605,23 @@ class CompositeStrategy(BaseStrategy):
         min_cap = ff.get("min_market_cap", 3e9)
 
         passed = []
-        for symbol in stock_scores:
-            # TODO: 从可靠数据源获取 PE/PB/市值
-            # 当前使用模拟数据（仅演示）
-            pe = random.uniform(5, 150)
-            pb = random.uniform(0.5, 15)
-            cap = random.uniform(1e9, 1e11)
+        # TODO: 接入真实PE/PB数据源后再启用以下过滤逻辑
+        # 当前基本面数据不可用，跳过PE/PB过滤，保留所有股票
+        self.logger.info("基本面过滤: 暂无PE/PB数据源，保留所有股票")
+        return list(stock_scores.keys())
 
-            if 0 < pe <= max_pe and 0 < pb <= max_pb and cap >= min_cap:
-                passed.append(symbol)
-
-        self.logger.info(
-            f"基本面过滤: PE≤{max_pe}, PB≤{max_pb}, "
-            f"市值≥{min_cap/1e8:.0f}亿 → 通过 {len(passed)} 只"
-        )
-        return passed if passed else list(stock_scores.keys())
+        # 以下为未来接入真实数据后的实现（当前不执行）
+        # for symbol in stock_scores:
+        #     pe = ...  # 从数据源获取
+        #     pb = ...  # 从数据源获取
+        #     cap = ...  # 从数据源获取
+        #     if 0 < pe <= max_pe and 0 < pb <= max_pb and cap >= min_cap:
+        #         passed.append(symbol)
+        # self.logger.info(
+        #     f"基本面过滤: PE<={max_pe}, PB<={max_pb}, "
+        #     f"市值>={min_cap/1e8:.0f}亿 -> 通过 {len(passed)} 只"
+        # )
+        # return passed if passed else list(stock_scores.keys())
 
     # ─────────────────────────────────────────────
     # 生成最终结果

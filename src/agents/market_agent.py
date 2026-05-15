@@ -3,8 +3,8 @@
 负责分析整体市场状态和情绪
 """
 import logging
-import random
-from typing import List, Dict, Any
+import requests
+from typing import List, Dict, Any, Optional
 from collections import defaultdict
 
 from ..core.types import StockData, MarketAnalysis
@@ -21,6 +21,11 @@ class MarketAgent:
     def __init__(self, config: Config):
         self.config = config
         self.logger = logging.getLogger("AInvest.MarketAgent")
+        self._session = requests.Session()
+        self._session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                           "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        })
         
     def analyze(self, market_data: List[StockData]) -> MarketAnalysis:
         """
@@ -76,30 +81,81 @@ class MarketAgent:
         )
     
     def _analyze_sector_heat(self, market_data: List[StockData]) -> Dict[str, float]:
-        """分析板块热度"""
-        # 简化的板块分析
-        sectors = {
-            "新能源": 0.85,
-            "消费": 0.72,
-            "科技": 0.68,
-            "医药": 0.55,
-            "金融": 0.45,
-            "地产": 0.30,
-        }
-        return sectors
+        """分析板块热度 — 优先从东财接口获取真实数据，失败则从行情数据推算"""
+        # 尝试从东财获取真实板块涨跌数据
+        real_heat = self._fetch_real_sector_heat()
+        if real_heat:
+            return real_heat
+
+        # 回退: 从行情数据按名称简单归类推算
+        return self._estimate_sector_heat_from_data(market_data)
+
+    def _fetch_real_sector_heat(self) -> Optional[Dict[str, float]]:
+        """从东方财富获取真实板块涨跌数据"""
+        try:
+            url = "http://push2.eastmoney.com/api/qt/clist/get"
+            params = {
+                "pn": "1", "pz": "30", "po": "1", "np": "1",
+                "ut": "b955e6154c27a7de8ee4dc42d7ba41cc",
+                "fltt": "2", "invt": "2",
+                "fid": "f3",
+                "fs": "m:90+t:2",
+                "fields": "f2,f3,f4,f12,f14",
+            }
+            resp = self._session.get(url, params=params, timeout=10)
+            data = resp.json()
+            items = data.get("data", {}).get("diff", [])
+
+            if not items:
+                return None
+
+            heat = {}
+            for item in items:
+                name = item.get("f14", "")
+                pct = item.get("f3", 0)
+                # 将涨跌幅映射到0-1热度: 跌5%→0, 涨5%→1
+                heat[name] = round(max(0, min(1, (pct + 5) / 10)), 2)
+
+            return heat
+
+        except Exception as e:
+            self.logger.debug(f"获取板块数据失败: {e}")
+            return None
+
+    def _estimate_sector_heat_from_data(self, market_data: List[StockData]) -> Dict[str, float]:
+        """从行情数据推算板块热度（无API数据时的回退方案）"""
+        # 按涨跌幅分布推算整体热度
+        if not market_data:
+            return {"市场整体": 0.5}
+
+        avg_pct = sum(s.change_pct for s in market_data) / len(market_data)
+        heat = max(0, min(1, (avg_pct + 5) / 10))
+
+        return {"市场整体": round(heat, 2)}
     
     def _evaluate_risk_level(
         self,
         market_data: List[StockData],
         rise_ratio: float
     ) -> str:
-        """评估风险等级"""
+        """评估风险等级 — 基于波动率和涨跌比"""
+        if not market_data:
+            return "中"
+
         # 计算平均波动
         avg_volatility = sum(abs(s.change_pct) for s in market_data) / len(market_data)
-        
-        if avg_volatility > 3 or rise_ratio < 0.35:
+
+        # 计算涨跌幅标准差（波动分散度）
+        pcts = [s.change_pct for s in market_data]
+        if len(pcts) > 1:
+            import numpy as np
+            std_pct = float(np.std(pcts))
+        else:
+            std_pct = avg_volatility
+
+        if avg_volatility > 3 or rise_ratio < 0.35 or std_pct > 4:
             return "高"
-        elif avg_volatility > 1.5:
+        elif avg_volatility > 1.5 or std_pct > 2.5:
             return "中"
         else:
             return "低"
