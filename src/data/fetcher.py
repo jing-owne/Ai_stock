@@ -99,27 +99,36 @@ class DataFetcher:
     def get_jin10_news(self, limit: int = 20) -> List[Dict]:
         """
         获取金十数据新闻
-        
+
         Args:
             limit: 获取数量
-            
+
         Returns:
             新闻列表
         """
         try:
-            url = f"https://flash-api.jin10.com/get_flash_list?channel=-8200&vip=1&classify=[29]&limit={limit}"
-            
-            headers = {
-                'accept': 'application/json, text/plain, */*',
-                'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
-                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'x-app-id': 'bVBF4FyRTn5NJF5n',
-                'x-version': '2.1.0'
+            from datetime import datetime
+
+            # 金十2026年已废弃旧参数（classify、旧x-app-id），必须使用 max_time + 新认证头
+            # 旧接口不带max_time会返回502，因此不再做探测回退
+            url = "https://flash-api.jin10.com/get_flash_list"
+            params = {
+                'channel': '-8200',
+                'max_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                'vip': '1',
+                'limit': str(limit),
             }
-            
-            response = requests.get(url, headers=headers, timeout=15)
+            headers = {
+                'accept': '*/*',
+                'x-token': '8b8c0810-85a9-4bec-8f78-016f7dc24823',
+                'x-app-id': 'g93rhHb9DcDptyPb',
+                'x-version': '1.0.0',
+                'accept-language': 'zh-Hans-CN;q=1'
+            }
+
+            response = requests.get(url, params=params, headers=headers, timeout=15)
             response.raise_for_status()
-            
+
             data = response.json()
             
             # 金十数据返回格式: {"status": 200, "data": [{id, time, data: {content, title, source}, ...}]}
