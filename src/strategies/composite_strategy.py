@@ -111,6 +111,8 @@ class CompositeStrategy(BaseStrategy):
 
         # 执行各子策略
         sub_results = self._execute_sub_strategies(market_data, params)
+        # 缓存子策略结果，避免 engine.py 重复获取
+        self._last_sub_results = sub_results
 
         # 计算综合评分
         stock_scores = self._calculate_composite_scores(sub_results, weights)

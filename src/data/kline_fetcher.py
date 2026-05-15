@@ -243,6 +243,7 @@ class KlineFetcher:
         获取多只股票的K线数据
 
         默认串行 + 延迟，防东财限频。max_workers>1 时用线程池并发。
+        已缓存的股票会直接复用，不会重新请求。
 
         Args:
             symbols: 股票代码列表
@@ -257,52 +258,69 @@ class KlineFetcher:
         if total == 0:
             return results
 
-        logger.info(f"开始获取 {total} 只股票K线数据 (并发={self.max_workers}, 延迟={self.delay_per_request}s)...")
-        start_time = time.time()
+        # 先检查缓存，分离已缓存和需要获取的
+        now = time.time()
+        need_fetch = []
+        for sym in symbols:
+            cache_key = f"{sym}_{days}"
+            if cache_key in self._cache and (now - self._cache_time.get(cache_key, 0)) < self._cache_ttl:
+                results[sym] = self._cache[cache_key]
+            else:
+                need_fetch.append(sym)
 
-        if self.max_workers <= 1:
-            # 串行模式：最稳定，防限频
-            for i, sym in enumerate(symbols):
-                try:
-                    kline = self.fetch_one(sym, days)
-                    if kline:
-                        results[sym] = kline
-                except Exception as e:
-                    logger.debug(f"{sym} 获取异常: {e}")
+        if need_fetch:
+            logger.info(
+                f"开始获取 {len(need_fetch)}/{total} 只股票K线数据 "
+                f"(缓存命中 {len(results)}, 并发={self.max_workers}, 延迟={self.delay_per_request}s)..."
+            )
+            start_time = time.time()
 
-                if (i + 1) % 50 == 0:
-                    logger.info(f"K线获取进度: {i+1}/{total}")
-
-                # 请求间延迟
-                if i < total - 1:
-                    time.sleep(self.delay_per_request)
-        else:
-            # 并发模式：有限并发 + 延迟提交
-            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                future_map = {}
-                for i, sym in enumerate(symbols):
-                    future_map[executor.submit(self.fetch_one, sym, days)] = sym
-                    if i < total - 1:
-                        time.sleep(self.delay_per_request)
-
-                done_count = 0
-                for future in as_completed(future_map):
-                    symbol = future_map[future]
-                    done_count += 1
+            if self.max_workers <= 1:
+                # 串行模式：最稳定，防限频
+                for i, sym in enumerate(need_fetch):
                     try:
-                        kline = future.result()
+                        kline = self.fetch_one(sym, days)
                         if kline:
-                            results[symbol] = kline
+                            results[sym] = kline
                     except Exception as e:
-                        logger.debug(f"{symbol} 获取异常: {e}")
+                        logger.debug(f"{sym} 获取异常: {e}")
 
-                    if done_count % 50 == 0:
-                        logger.info(f"K线获取进度: {done_count}/{total}")
+                    if (i + 1) % 50 == 0:
+                        logger.info(f"K线获取进度: {i+1}/{len(need_fetch)}")
 
-        elapsed = time.time() - start_time
-        logger.info(
-            f"K线获取完成: {len(results)}/{total} 只, 耗时 {elapsed:.1f}s"
-        )
+                    # 请求间延迟
+                    if i < len(need_fetch) - 1:
+                        time.sleep(self.delay_per_request)
+            else:
+                # 并发模式：有限并发 + 延迟提交
+                with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                    future_map = {}
+                    for i, sym in enumerate(need_fetch):
+                        future_map[executor.submit(self.fetch_one, sym, days)] = sym
+                        if i < len(need_fetch) - 1:
+                            time.sleep(self.delay_per_request)
+
+                    done_count = 0
+                    for future in as_completed(future_map):
+                        symbol = future_map[future]
+                        done_count += 1
+                        try:
+                            kline = future.result()
+                            if kline:
+                                results[symbol] = kline
+                        except Exception as e:
+                            logger.debug(f"{symbol} 获取异常: {e}")
+
+                        if done_count % 50 == 0:
+                            logger.info(f"K线获取进度: {done_count}/{len(need_fetch)}")
+
+            elapsed = time.time() - start_time
+            logger.info(
+                f"K线获取完成: {len(results)}/{total} 只, 耗时 {elapsed:.1f}s"
+            )
+        else:
+            logger.info(f"K线数据全部命中缓存: {len(results)}/{total} 只")
+
         return results
 
     def get_numpy_arrays(self, kline_data: List[StockData]) -> Optional[Dict[str, np.ndarray]]:
