@@ -12,7 +12,7 @@ class ReportFormatter:
     
     @staticmethod
     def format_score(score: float) -> str:
-        """格式化评分"""
+        """格式化评分（爱马仕橙）"""
         if score >= 80:
             return f'<span class="score-high">{score:.1f}</span>'
         elif score >= 60:

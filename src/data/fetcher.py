@@ -114,7 +114,7 @@ class DataFetcher:
                 'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
                 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'x-app-id': 'bVBF4FyRTn5NJF5n',
-                'x-version': '2.0.0'
+                'x-version': '2.1.0'
             }
             
             response = requests.get(url, headers=headers, timeout=15)

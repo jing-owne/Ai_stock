@@ -124,18 +124,18 @@ def get_html_template(results: List[ScanResult], analysis: MarketAnalysis = None
         }}
         
         .score-high {{
-            background: #d4edda;
-            color: #155724;
+            background: #FFF3E0;
+            color: #E87722;
         }}
         
         .score-medium {{
-            background: #fff3cd;
-            color: #856404;
+            background: #FFF8E1;
+            color: #F5A623;
         }}
         
         .score-low {{
-            background: #f8d7da;
-            color: #721c24;
+            background: #FFF3E0;
+            color: #E87722;
         }}
         
         .signal {{
