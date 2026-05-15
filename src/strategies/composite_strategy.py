@@ -197,13 +197,24 @@ class CompositeStrategy(BaseStrategy):
     # ─────────────────────────────────────────────
 
     def _prefetch_kline_and_indicators(self, market_data: List[StockData]) -> None:
-        """预获取K线数据并计算技术指标（并发，漏斗前置）"""
+        """预获取K线数据并计算技术指标（并发，漏斗前置）
+
+        如果K线获取全部失败，设置 _kline_available=False 通知各策略降级
+        """
         # 收集所有需要K线的股票代码
         symbols = list({s.symbol for s in market_data if s.change_pct > 0 and s.amount >= 100_000_000})
         self.logger.info(f"预获取 {len(symbols)} 只股票K线数据...")
 
         # 并发获取K线
         self._kline_cache = self._kline_fetcher.fetch_batch(symbols, days=60)
+
+        # 判断K线数据是否可用
+        self._kline_available = len(self._kline_cache) > 0
+        if not self._kline_available:
+            self.logger.warning(
+                f"K线数据全部获取失败({len(symbols)}只)，各策略将降级为纯行情指标模式"
+            )
+            return
 
         # 计算技术指标
         import numpy as np
@@ -249,7 +260,7 @@ class CompositeStrategy(BaseStrategy):
         return sub_results
 
     def _execute_volume_surge(self, market_data, params) -> List[ScanResult]:
-        """放量上涨策略 — 使用真实5日均量比"""
+        """放量上涨策略 — 使用真实5日均量比，K线不可用时降级为行情指标估算"""
         cfg = params.get("volume_surge", {}) if params else {}
         min_ratio = cfg.get("min_volume_ratio", 2.0)
         min_change = cfg.get("min_price_change", 1.0)
@@ -266,6 +277,13 @@ class CompositeStrategy(BaseStrategy):
             indicators = self._indicator_cache.get(stock.symbol)
             if indicators and "volume_ratio" in indicators:
                 volume_ratio = indicators["volume_ratio"]
+            elif not getattr(self, '_kline_available', True):
+                # K线数据不可用，使用换手率估算放量倍数
+                # 换手率>5% 大致对应放量2倍以上（经验估算）
+                est_ratio = stock.turn_rate / 2.5 if stock.turn_rate > 0 else 1.0
+                volume_ratio = round(est_ratio, 2)
+                if volume_ratio < min_ratio:
+                    continue
             else:
                 # 无K线数据，跳过（无法计算真实放量）
                 continue
@@ -401,7 +419,7 @@ class CompositeStrategy(BaseStrategy):
         return results
 
     def _execute_ai_technical(self, market_data, params) -> List[ScanResult]:
-        """AI技术面策略 — 基于真实技术指标计算形态和趋势评分"""
+        """AI技术面策略 — 基于真实技术指标计算，K线不可用时降级为行情评分"""
         cfg = params.get("ai_technical", {}) if params else {}
         threshold = cfg.get("pattern_threshold", 0.75) * 100
 
@@ -409,7 +427,23 @@ class CompositeStrategy(BaseStrategy):
         for stock in market_data:
             indicators = self._indicator_cache.get(stock.symbol)
             if not indicators:
-                continue  # 无K线数据，无法评估
+                # K线不可用时的降级：用行情数据粗略评分
+                if not getattr(self, '_kline_available', True):
+                    # 用涨幅+成交额估算一个粗略分数
+                    est_score = 50 + min(stock.change_pct * 3, 20) + min(stock.amount / 5e9 * 10, 15)
+                    if est_score >= threshold:
+                        results.append(ScanResult(
+                            symbol=stock.symbol,
+                            name=stock.name,
+                            strategy=StrategyType.AI_TECHNICAL,
+                            score=round(est_score, 1),
+                            signals=["行情估算(无K线)"],
+                            data=stock,
+                            metadata={"note": "K线不可用，降级为行情估算"}
+                        ))
+                    continue
+                else:
+                    continue  # 正常情况无K线则跳过
 
             # 使用真实技术指标计算形态评分和趋势评分
             volume_ratio = indicators.get("volume_ratio", 1.0)

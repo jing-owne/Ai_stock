@@ -11,11 +11,15 @@ import json
 import logging
 import time
 import requests
+import urllib3
 from typing import List, Optional, Tuple
 from datetime import datetime, timedelta
 
 from ..core.types import StockData
 from ..core.config import Config
+
+# 抑制 HTTPS 不验证证书的警告
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 class DataAgent:
@@ -28,10 +32,11 @@ class DataAgent:
     """
 
     TENCENT_QUOTE_URL = "http://qt.gtimg.cn/q="
-    EASTMONEY_KLINE_URL = "http://push2his.eastmoney.com/api/qt/stock/kline/get"
+    EASTMONEY_KLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
     EASTMONEY_HEADERS = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://quote.eastmoney.com/",
     }
 
     def __init__(self, config: Config):
@@ -41,6 +46,9 @@ class DataAgent:
         self._cache_time = {}
         self._session = requests.Session()
         self._session.headers.update(self.EASTMONEY_HEADERS)
+        # 复用 KlineFetcher 获取历史K线（已处理限频+连接复用问题）
+        from ..data.kline_fetcher import KlineFetcher
+        self._kline_fetcher = KlineFetcher(max_workers=1, delay_per_request=0.8)
 
     def fetch_market_data(
         self,
@@ -89,14 +97,17 @@ class DataAgent:
         """
         获取单只股票历史数据
 
-        Args:
-            symbol: 股票代码
-            days: 历史天数
-
-        Returns:
-            StockData列表
+        Fallback: KlineFetcher(东财) -> _fetch_history_from_eastmoney -> mock
         """
         self.logger.info(f"获取股票{symbol}最近{days}天数据")
+
+        try:
+            # 优先走 KlineFetcher（已处理限频+连接复用问题）
+            result = self._kline_fetcher.fetch_one(symbol, days)
+            if result and len(result) > 0:
+                return result
+        except Exception:
+            pass
 
         try:
             return self._fetch_history_from_eastmoney(symbol, days)
@@ -287,18 +298,23 @@ class DataAgent:
                     code = code_prefix[2:]  # 去掉sh/sz前缀
                     secid = f"1.{code}" if code_prefix.startswith("sh") else f"0.{code}"
 
+                    # 只取最近5天K线（实时行情备用，不需要太多历史）
+                    from datetime import datetime, timedelta
+                    _end = datetime.now().strftime("%Y%m%d")
+                    _beg = (datetime.now() - timedelta(days=10)).strftime("%Y%m%d")
                     params = {
                         "secid": secid,
                         "fields1": "f1,f2,f3,f4,f5,f6",
                         "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
                         "klt": "101", "fqt": "1",
-                        "beg": "20260501", "end": "20260510",
+                        "beg": _beg, "end": _end,
                     }
 
                     resp = self._session.get(
                         self.EASTMONEY_KLINE_URL,
                         params=params,
                         timeout=15,
+                        verify=False,
                     )
                     data = resp.json()
                     klines = data.get("data", {}).get("klines", [])
@@ -354,24 +370,34 @@ class DataAgent:
         else:
             secid = f"0.{symbol}"
 
-        end_date = int(time.time())
-        begin_date = int(end_date - days * 86400)
-
+        # 东财接口用 YYYYMMDD 格式，只取需要天数减少响应体积
+        from datetime import datetime, timedelta
+        end_date = datetime.now().strftime("%Y%m%d")
+        beg_date = (datetime.now() - timedelta(days=days + 30)).strftime("%Y%m%d")
         params = {
             "secid": secid,
             "fields1": "f1,f2,f3,f4,f5,f6",
             "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
             "klt": "101", "fqt": "1",
-            "beg": str(begin_date), "end": str(end_date),
+            "beg": beg_date, "end": end_date,
         }
 
-        resp = self._session.get(
+        # 每次用新 Session，避免连接复用被东财断开
+        session = requests.Session()
+        session.headers.update(self.EASTMONEY_HEADERS)
+        resp = session.get(
             self.EASTMONEY_KLINE_URL,
             params=params,
             timeout=30,
+            verify=False,
         )
+        session.close()
         data = resp.json()
         klines = data.get("data", {}).get("klines", [])
+
+        # 只保留最近 days 天
+        if klines and len(klines) > days:
+            klines = klines[-days:]
 
         stock_list = []
         for line in klines:

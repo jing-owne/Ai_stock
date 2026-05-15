@@ -4,8 +4,11 @@
 """
 import logging
 import requests
+import urllib3
 from typing import List, Dict, Any, Optional
 from collections import defaultdict
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from ..core.types import StockData, MarketAnalysis
 from ..core.config import Config
@@ -93,7 +96,7 @@ class MarketAgent:
     def _fetch_real_sector_heat(self) -> Optional[Dict[str, float]]:
         """从东方财富获取真实板块涨跌数据"""
         try:
-            url = "http://push2.eastmoney.com/api/qt/clist/get"
+            url = "https://push2.eastmoney.com/api/qt/clist/get"
             params = {
                 "pn": "1", "pz": "30", "po": "1", "np": "1",
                 "ut": "b955e6154c27a7de8ee4dc42d7ba41cc",
@@ -102,7 +105,11 @@ class MarketAgent:
                 "fs": "m:90+t:2",
                 "fields": "f2,f3,f4,f12,f14",
             }
-            resp = self._session.get(url, params=params, timeout=10)
+            # 用新 Session 避免连接复用问题
+            session = requests.Session()
+            session.headers.update(self.HEADERS)
+            resp = session.get(url, params=params, timeout=10, verify=False)
+            session.close()
             data = resp.json()
             items = data.get("data", {}).get("diff", [])
 

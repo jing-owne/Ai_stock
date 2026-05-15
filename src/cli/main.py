@@ -96,6 +96,8 @@ def cmd_email(args):
 
 def cmd_market(args):
     """执行市场分析命令"""
+    engine = create_engine(args.config)
+    analysis = engine.analyze_market()
     
     print(f"\n{'='*60}")
     print("市场分析报告")
@@ -152,11 +154,15 @@ def cmd_backtest(args):
     
     print(f"\n回测结果: {strategy.value}")
     print("-" * 40)
-    print(f"收益率: {result['total_return']:.2f}%")
-    print(f"胜率: {result['win_rate']:.2f}%")
-    print(f"最大回撤: {result['max_drawdown']:.2f}%")
-    print(f"夏普比率: {result['sharpe_ratio']:.2f}")
-    print(f"总交易次数: {result['total_trades']}")
+    if result.get('total_return') is not None:
+        print(f"收益率: {result['total_return']:.2f}%")
+        print(f"胜率: {result['win_rate']:.2f}%")
+        print(f"最大回撤: {result['max_drawdown']:.2f}%")
+        print(f"夏普比率: {result['sharpe_ratio']:.2f}")
+        print(f"总交易次数: {result['total_trades']}")
+    else:
+        print(f"交易日: {result.get('trading_days', 'N/A')}")
+        print(f"状态: {result.get('note', '待实现')}")
 
 
 def create_parser() -> argparse.ArgumentParser:
