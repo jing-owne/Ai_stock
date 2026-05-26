@@ -300,11 +300,8 @@ class CompositeStrategy(BaseStrategy):
         for stock in market_data:
             if stock.change_pct < min_change or stock.amount < min_amount:
                 continue
-            if stock.change_pct > max_change:
-                filtered_count["high_change"] += 1
-                continue
 
-            # 从K线指标缓存获取真实放量倍数
+            # 从K线指标缓存获取真实放量倍数（提前读取，用于仓位感知的高涨幅过滤）
             indicators = self._indicator_cache.get(stock.symbol)
             if indicators and "volume_ratio" in indicators:
                 volume_ratio = indicators["volume_ratio"]
@@ -318,6 +315,18 @@ class CompositeStrategy(BaseStrategy):
 
             if volume_ratio < min_ratio:
                 continue
+
+            # ── v2.1 仓位感知的高涨幅过滤 ──
+            # 低位（position_20d < 50）：涨停突破可能是启动信号，允许最高10%涨幅
+            # 高位（position_20d >= 50）：严格过滤，防追高
+            pos_20d = indicators.get("position_20d", 50) if indicators else 50
+            effective_max_change = max_change + 2.0 if pos_20d < 50 else max_change  # 低位放宽2%
+            if stock.change_pct > effective_max_change:
+                filtered_count["high_change"] += 1
+                continue
+            if stock.change_pct > max_change and pos_20d < 50:
+                # 低位涨停突破：不过滤，打标签
+                pass  # 继续执行，后续会在signals中标注
 
             # ── v2.1 智能防套过滤：区分高位追涨 vs 低位启动 ──
             pos_20d = indicators.get("position_20d", 50) if indicators else 50
@@ -355,9 +364,11 @@ class CompositeStrategy(BaseStrategy):
             elif stock.change_pct >= 3.0:
                 signals.append("大幅上涨" + sfx)
             # 添加位置标签
-            pos_20 = indicators.get("position_20d", 50) if indicators else 50
-            if pos_20 < 30:
+            if pos_20d < 30:
                 signals.append("低位启动" + sfx)
+            # 低位涨停突破标签
+            if stock.change_pct > max_change and pos_20d < 50:
+                signals.append("低位涨停突破" + sfx)
 
             results.append(ScanResult(
                 symbol=stock.symbol,
