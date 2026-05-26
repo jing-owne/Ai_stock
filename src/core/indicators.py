@@ -213,6 +213,49 @@ def calc_all_indicators(
         if amplitudes:
             result["avg_amplitude_5d"] = float(np.mean(amplitudes))
 
+    # ── 新增：箱体检测指标 ──
+    if n >= 30:
+        close_30 = close[-30:]
+        box_high_30 = float(np.max(close_30))
+        box_low_30 = float(np.min(close_30))
+        box_range = box_high_30 - box_low_30
+        if box_low_30 > 0:
+            # 30日箱体振幅（百分比）
+            result["box_range_30d"] = float(box_range / box_low_30 * 100)
+            # 当前价突破箱体上沿幅度
+            result["breakout_pct"] = float((close[-1] - box_high_30) / box_high_30 * 100)
+            result["box_high_30"] = box_high_30
+            result["box_low_30"] = box_low_30
+            # 30日均换手率（用于判断是否缩量横盘）
+            if volume is not None and n >= 35:
+                vol_30_avg = float(np.mean(volume[-35:-5]))
+                vol_5_avg = float(np.mean(volume[-6:-1]))
+                if vol_30_avg > 0:
+                    result["box_vol_ratio"] = float(vol_5_avg / vol_30_avg)
+
+    # ── 新增：均线粘合度指标 ──
+    if n >= 20:
+        close_20 = close[-20:]
+        sma5_series = calc_sma(close, 5)
+        sma10_series = calc_sma(close, 10)
+        sma20_series = calc_sma(close, 20)
+        # 近20天均线距离（越小越粘合）
+        last_20_idx = list(range(max(0, n - 20), n))
+        distances = []
+        for i in last_20_idx:
+            if (not np.isnan(sma5_series[i]) and
+                not np.isnan(sma10_series[i]) and
+                not np.isnan(sma20_series[i])):
+                max_ma = max(sma5_series[i], sma10_series[i], sma20_series[i])
+                min_ma = min(sma5_series[i], sma10_series[i], sma20_series[i])
+                if min_ma > 0:
+                    dist = (max_ma - min_ma) / min_ma * 100
+                    distances.append(dist)
+        if distances:
+            result["ma_convergence_20d"] = float(np.mean(distances))
+            # 粘合天数（均线距离<2%为粘合）
+            result["ma_convergence_days"] = sum(1 for d in distances if d < 2.0)
+
     # RSI
     rsi_arr = calc_rsi(close, 14)
     if not np.isnan(rsi_arr[-1]):
@@ -402,61 +445,76 @@ def calc_anti_trap_penalty(
     防套惩罚分 (负值，0表示无风险)
     检测导致"今天买明天套"的典型陷阱模式。
 
+    v2.1 优化: 区分高位陷阱 vs 低位启动
+    - 低位(<40%)的连涨视为底部启动，减轻惩罚
+    - 高位(>70%)的连涨视为追高风险，加重惩罚
+
     惩罚规则:
-    - 连续上涨>=4天: -5/天（第4天起）
+    - 连续上涨>=4天 + 高位: -5/天（第4天起）
+    - 连续上涨>=4天 + 低位: -2/天（底部启动不重罚）
     - 距20日高点<2% + 涨幅>3%: -15（高位追涨）
-    - 换手率>8% + 涨幅>5%: -20（投机性放量出货）
+    - 换手率>8% + 涨幅>5% + 高位: -20（投机性放量出货）
+    - 换手率>8% + 涨幅>5% + 低位: -10（可能是启动放量）
     - 涨幅>7%（接近涨停）: -15（追板风险大）
     - 20日位置>85% + 振幅>6%: -15（高位巨震出货）
     - 收盘在日内低位(<30%): -10（尾盘跳水，次日大概率低开）
-    - 连续上涨3天 + 今日放量>3倍: -10（高潮放量=见顶信号）
+    - 连续上涨3天 + 放量>3倍 + 高位: -10（高潮放量=见顶信号）
+    - 连续上涨3天 + 放量>3倍 + 低位: 不惩罚（底部放量可能是启动信号）
     """
     penalty = 0.0
-    reasons = []
-
+    pos_20 = indicators.get("position_20d", 50)
     consecutive_up = indicators.get("consecutive_up", 0)
+    is_low = pos_20 < 40
+    is_high = pos_20 > 70
 
     # 1. 连续上涨过多
     if consecutive_up >= 4:
         extra_days = consecutive_up - 3
-        p = min(extra_days * 5, 20)
+        if is_high:
+            p = min(extra_days * 6, 25)  # 高位加重
+        elif is_low:
+            p = min(extra_days * 2, 8)   # 低位减轻
+        else:
+            p = min(extra_days * 4, 16)
         penalty += p
-        reasons.append(f"连涨{consecutive_up}天(-{p})")
 
     # 2. 距20日高点太近 + 涨幅不小
     dist_high = indicators.get("dist_from_20d_high", 100)
     if dist_high is not None and dist_high < 2.0 and change_pct > 3:
         penalty += 15
-        reasons.append(f"距20日高仅{dist_high:.1f}%(-15)")
 
-    # 3. 换手率畸高 + 大涨 = 投机出货
+    # 3. 换手率畸高 + 大涨
     if turn_rate > 8 and change_pct > 5:
-        penalty += 20
-        reasons.append(f"高换手{turn_rate:.0f}%+大涨(-20)")
+        if is_high:
+            penalty += 20  # 高位出逃
+        elif is_low:
+            penalty += 5   # 低位可能是启动
+        else:
+            penalty += 10
 
     # 4. 接近涨停
     if change_pct > 7:
         penalty += 15
-        reasons.append(f"涨幅{change_pct:.1f}%接近涨停(-15)")
 
     # 5. 高位巨震
-    pos_20 = indicators.get("position_20d", 50)
     avg_amp = indicators.get("avg_amplitude_5d", 3)
     if pos_20 > 85 and avg_amp > 6:
         penalty += 15
-        reasons.append(f"高位巨震(-15)")
 
     # 6. 尾盘跳水（收盘在日内低位）
     close_pos = indicators.get("close_position_today", 50)
     if close_pos < 30 and change_pct > 1:
         penalty += 10
-        reasons.append(f"尾盘回落(收盘位{close_pos:.0f}%)(-10)")
 
-    # 7. 连涨+放量高潮（经典见顶信号）
+    # 7. 连涨+放量高潮 — 区分高位见顶 vs 低位启动
     vol_ratio = indicators.get("volume_ratio", 1.0)
     if consecutive_up >= 3 and vol_ratio > 3.0:
-        penalty += 10
-        reasons.append(f"连涨{consecutive_up}天+放量{vol_ratio:.1f}倍(-10)")
+        if is_high:
+            penalty += 15  # 高位放量=见顶
+        elif is_low:
+            pass  # 低位放量=启动信号，不惩罚
+        else:
+            penalty += 5
 
     return round(min(penalty, 50), 1)
 
@@ -498,3 +556,122 @@ def calc_low_absorb_score(indicators: Dict[str, float]) -> float:
         score += 10
 
     return min(score, 100.0)
+
+
+def calc_box_breakout_score(indicators: Dict[str, float]) -> float:
+    """
+    箱体突破评分 (0-100)
+    检测长期横盘缩量后放量突破箱体上沿
+
+    加分规则:
+    - 30日箱体振幅<15%: +20（箱体整理充分）
+    - 箱体振幅15-25%: +10
+    - 收盘突破箱体上沿>0%: +25（突破确认）
+    - 5日均量比30日>2倍: +20（放量突破）
+    - 均量比1.5-2倍: +10
+    - 20日位置<60%: +15（不是高位突破）
+    - MACD金叉: +15
+    - RSI 50-70: +10（强势不超买）
+    """
+    score = 0.0
+
+    box_range = indicators.get("box_range_30d")
+    if box_range is not None:
+        if box_range < 15:
+            score += 20
+        elif box_range < 25:
+            score += 10
+    else:
+        return 0.0  # 没有箱体数据，无法评分
+
+    breakout = indicators.get("breakout_pct", -1)
+    if breakout is not None and breakout >= 0:
+        score += 25
+    elif breakout is not None and breakout > -2:
+        score += 10  # 接近上沿也算
+
+    box_vol = indicators.get("box_vol_ratio", 1.0)
+    if box_vol >= 2.0:
+        score += 20
+    elif box_vol >= 1.5:
+        score += 10
+
+    pos_20 = indicators.get("position_20d", 50)
+    if pos_20 < 60:
+        score += 15
+    elif pos_20 >= 85:
+        score -= 10  # 高位突破扣分
+
+    if indicators.get("macd_golden_cross"):
+        score += 15
+
+    rsi = indicators.get("rsi14")
+    if rsi is not None and 50 < rsi < 70:
+        score += 10
+    elif rsi is not None and rsi >= 70:
+        score -= 5  # 超买风险
+
+    return max(0.0, min(score, 100.0))
+
+
+def calc_ma_divergence_score(indicators: Dict[str, float]) -> float:
+    """
+    均线多头发散评分 (0-100)
+    检测均线从粘合到多头发散的过程
+
+    加分规则:
+    - 20日均线粘合度<2%: +25（高度粘合）
+    - 粘合度2-4%: +15
+    - 粘合天数>=5天: +10（持续粘合）
+    - 均线多头排列: +20（发散确认）
+    - MACD金叉: +15（趋势确认）
+    - 放量(volume_ratio>1.5): +10（量能配合）
+    - 20日位置<50%: +15（低位启动）
+    - 连续上涨2-3天: +5（温和启动）
+    """
+    score = 0.0
+
+    convergence = indicators.get("ma_convergence_20d")
+    if convergence is None:
+        return 0.0
+
+    if convergence < 2.0:
+        score += 25
+    elif convergence < 4.0:
+        score += 15
+    elif convergence >= 8.0:
+        return 0.0  # 均线太分散，不符合策略
+
+    conv_days = indicators.get("ma_convergence_days", 0)
+    if conv_days >= 5:
+        score += 10
+    elif conv_days >= 3:
+        score += 5
+
+    if indicators.get("ma_bullish_align"):
+        score += 20
+
+    if indicators.get("macd_golden_cross"):
+        score += 15
+    elif indicators.get("macd_above_signal"):
+        score += 5
+
+    vol_ratio = indicators.get("volume_ratio", 1.0)
+    if vol_ratio >= 1.5:
+        score += 10
+    elif vol_ratio >= 1.2:
+        score += 5
+
+    pos_20 = indicators.get("position_20d", 50)
+    if pos_20 < 50:
+        score += 15
+    elif pos_20 < 70:
+        score += 5
+    elif pos_20 >= 90:
+        score -= 10  # 高位发散扣分
+
+    consecutive_up = indicators.get("consecutive_up", 0)
+    if 2 <= consecutive_up <= 3:
+        score += 5
+
+    return max(0.0, min(score, 100.0))

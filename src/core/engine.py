@@ -96,7 +96,7 @@ class AInvestEngine:
                 sub_raw = getattr(comp_strategy, '_last_sub_results', {}) or {}
                 # 整理每个子策略 Top 10
                 sub_top10: Dict[str, List] = {}
-                for sname in ["volume_surge", "turnover_rank", "multi_factor", "ai_technical", "institution"]:
+                for sname in ["volume_surge", "turnover_rank", "multi_factor", "ai_technical", "institution", "box_breakout", "ma_divergence"]:
                     items = []
                     for sym, strat_map in sub_raw.items():
                         if sname in strat_map:

@@ -18,32 +18,38 @@ import logging
 
 from .base import BaseStrategy
 from ..core.types import StockData, ScanResult, StrategyType
-from ..core.indicators import calc_all_indicators, calc_technical_score, calc_pattern_score, calc_trend_score, calc_position_score, calc_anti_trap_penalty, calc_low_absorb_score
+from ..core.indicators import calc_all_indicators, calc_technical_score, calc_pattern_score, calc_trend_score, calc_position_score, calc_anti_trap_penalty, calc_low_absorb_score, calc_box_breakout_score, calc_ma_divergence_score
 from ..data.kline_fetcher import KlineFetcher
 
 
 # 市场状态 → 动态权重
 MARKET_STATE_WEIGHTS = {
     "trend_up": {    # 上涨趋势 → 动量策略加码
-        "volume_surge": 0.25,
-        "turnover_rank": 0.25,
-        "multi_factor": 0.30,
-        "ai_technical": 0.20,
-        "institution": 0.00,   # 上涨时机构策略参考价值低
+        "volume_surge": 0.20,
+        "turnover_rank": 0.20,
+        "multi_factor": 0.20,
+        "ai_technical": 0.15,
+        "institution": 0.00,
+        "box_breakout": 0.15,     # 上涨趋势箱体突破有效
+        "ma_divergence": 0.10,    # 均线发散配合趋势
     },
-    "trend_down": {  # 下跌趋势 → 机构和多因子加码
-        "volume_surge": 0.15,
-        "turnover_rank": 0.25,
-        "multi_factor": 0.30,
-        "ai_technical": 0.20,
-        "institution": 0.10,
-    },
-    "volatile": {     # 震荡市 → 技术面加码
-        "volume_surge": 0.25,
+    "trend_down": {  # 下跌趋势 → 机构和低吸策略加码
+        "volume_surge": 0.10,
         "turnover_rank": 0.20,
         "multi_factor": 0.25,
-        "ai_technical": 0.20,
+        "ai_technical": 0.15,
         "institution": 0.10,
+        "box_breakout": 0.10,     # 下跌趋势箱体突破谨慎
+        "ma_divergence": 0.10,
+    },
+    "volatile": {     # 震荡市 → 技术面加码
+        "volume_surge": 0.15,
+        "turnover_rank": 0.15,
+        "multi_factor": 0.20,
+        "ai_technical": 0.15,
+        "institution": 0.05,
+        "box_breakout": 0.15,     # 震荡市箱体突破机会多
+        "ma_divergence": 0.15,    # 均线发散提前布局
     },
 }
 
@@ -168,11 +174,13 @@ class CompositeStrategy(BaseStrategy):
             # 关闭动态 → 使用固定权重
             self.logger.info("动态权重已关闭，使用固定权重")
             return {
-                "volume_surge": composite.get("volume_surge_weight", 0.25),
-                "turnover_rank": composite.get("turnover_rank_weight", 0.25),
-                "multi_factor": composite.get("multi_factor_weight", 0.25),
-                "ai_technical": composite.get("ai_technical_weight", 0.20),
+                "volume_surge": composite.get("volume_surge_weight", 0.20),
+                "turnover_rank": composite.get("turnover_rank_weight", 0.20),
+                "multi_factor": composite.get("multi_factor_weight", 0.20),
+                "ai_technical": composite.get("ai_technical_weight", 0.15),
                 "institution": composite.get("institution_weight", 0.05),
+                "box_breakout": composite.get("box_breakout_weight", 0.10),
+                "ma_divergence": composite.get("ma_divergence_weight", 0.10),
             }
 
         # 动态权重
@@ -259,6 +267,12 @@ class CompositeStrategy(BaseStrategy):
         for result in self._execute_institution(market_data, params):
             sub_results.setdefault(result.symbol, {})["institution"] = result
 
+        for result in self._execute_box_breakout(market_data, params):
+            sub_results.setdefault(result.symbol, {})["box_breakout"] = result
+
+        for result in self._execute_ma_divergence(market_data, params):
+            sub_results.setdefault(result.symbol, {})["ma_divergence"] = result
+
         return sub_results
 
     def _execute_volume_surge(self, market_data, params) -> List[ScanResult]:
@@ -305,19 +319,23 @@ class CompositeStrategy(BaseStrategy):
             if volume_ratio < min_ratio:
                 continue
 
-            # ── v2.0 新增防套过滤 ──
-            # 连续上涨过多 → 不追
-            if indicators and indicators.get("consecutive_up", 0) > max_consecutive_up:
+            # ── v2.1 智能防套过滤：区分高位追涨 vs 低位启动 ──
+            pos_20d = indicators.get("position_20d", 50) if indicators else 50
+            consecutive_up = indicators.get("consecutive_up", 0) if indicators else 0
+
+            # 连续上涨 + 高位 → 过滤（高位追涨风险）
+            if consecutive_up > max_consecutive_up and pos_20d > 60:
                 filtered_count["consecutive"] += 1
                 continue
 
             # 20日高位放量 → 警惕出货
-            if indicators and indicators.get("position_20d", 50) > max_position_20d:
+            if pos_20d > max_position_20d:
                 filtered_count["position"] += 1
                 continue
 
-            # 振幅过大（可用今日振幅或近5日平均）
-            if indicators and indicators.get("avg_amplitude_5d", 3) > max_amplitude:
+            # 振幅过大 + 高位 → 过滤；低位大振幅可能是洗盘
+            avg_amp = indicators.get("avg_amplitude_5d", 3) if indicators else 3
+            if avg_amp > max_amplitude and pos_20d > 50:
                 filtered_count["amplitude"] += 1
                 continue
 
@@ -614,6 +632,156 @@ class CompositeStrategy(BaseStrategy):
         results.sort(key=lambda x: x.score, reverse=True)
         return results
 
+    def _execute_box_breakout(self, market_data, params) -> List[ScanResult]:
+        """箱体突破策略 — 检测长期横盘缩量后放量突破箱体上沿
+
+        典型特征（共达电声 2026-02-10）:
+        - 30日股价在±15%区间内震荡
+        - 日均换手率 < 3%（缩量横盘）
+        - 当日涨幅 > 3%，收盘突破箱体上沿
+        - 当日换手率 > 5日均量的2倍
+        """
+        cfg = params.get("box_breakout", {}) if params else {}
+        max_box_range = cfg.get("max_box_range", 18.0)       # 箱体振幅上限
+        min_box_range = cfg.get("min_box_range", 3.0)         # 箱体振幅下限
+        min_breakout_pct = cfg.get("min_breakout_pct", -1.0)  # 突破上沿阈值（允许接近）
+        min_change = cfg.get("min_price_change", 2.0)         # 当日最小涨幅
+        max_change = cfg.get("max_price_change", 7.0)         # 当日最大涨幅
+        min_amount = cfg.get("min_amount", 100_000_000)       # 最小成交额
+        min_score = cfg.get("min_score", 40)                  # 最低评分
+
+        results = []
+        for stock in market_data:
+            if stock.change_pct < min_change or stock.change_pct > max_change:
+                continue
+            if stock.amount < min_amount:
+                continue
+
+            indicators = self._indicator_cache.get(stock.symbol)
+            if not indicators:
+                continue
+
+            box_range = indicators.get("box_range_30d")
+            if box_range is None or box_range > max_box_range or box_range < min_box_range:
+                continue
+
+            breakout = indicators.get("breakout_pct", -5)
+            if breakout < min_breakout_pct:
+                continue
+
+            score = calc_box_breakout_score(indicators)
+            if score < min_score:
+                continue
+
+            signals = []
+            sfx = "「箱体」"
+            if breakout >= 0:
+                signals.append("突破箱体上沿" + sfx)
+            else:
+                signals.append("接近箱体上沿" + sfx)
+            if indicators.get("box_vol_ratio", 1.0) >= 1.5:
+                signals.append("放量突破" + sfx)
+            pos_20 = indicators.get("position_20d", 50)
+            if pos_20 < 50:
+                signals.append("低位启动" + sfx)
+            if indicators.get("macd_golden_cross"):
+                signals.append("MACD金叉" + sfx)
+
+            results.append(ScanResult(
+                symbol=stock.symbol,
+                name=stock.name,
+                strategy=StrategyType.BOX_BREAKOUT,
+                score=round(score, 1),
+                signals=signals,
+                data=stock,
+                metadata={
+                    "box_range": round(box_range, 1),
+                    "breakout_pct": round(breakout, 2),
+                    "box_vol_ratio": round(indicators.get("box_vol_ratio", 1.0), 2),
+                }
+            ))
+
+        results.sort(key=lambda x: x.score, reverse=True)
+        self.logger.info(f"箱体突破策略: {len(results)} 只股票")
+        return results
+
+    def _execute_ma_divergence(self, market_data, params) -> List[ScanResult]:
+        """均线多头发散策略 — 检测均线从粘合到多头发散的过程
+
+        典型特征:
+        - 过去20天 MA5/MA10/MA20 频繁粘合（距离<2%）
+        - 当日 MA5 > MA10 > MA20（多头排列确认）
+        - 当日涨幅 > 2%，成交量放大
+        - 所处位置不过高
+        """
+        cfg = params.get("ma_divergence", {}) if params else {}
+        max_convergence = cfg.get("max_convergence", 5.0)    # 最大粘合度
+        min_convergence_days = cfg.get("min_convergence_days", 3)  # 最小粘合天数
+        min_change = cfg.get("min_price_change", 1.0)         # 最小涨幅
+        max_change = cfg.get("max_price_change", 7.0)         # 最大涨幅
+        min_amount = cfg.get("min_amount", 100_000_000)       # 最小成交额
+        min_score = cfg.get("min_score", 35)                  # 最低评分
+
+        results = []
+        for stock in market_data:
+            if stock.change_pct < min_change or stock.change_pct > max_change:
+                continue
+            if stock.amount < min_amount:
+                continue
+
+            indicators = self._indicator_cache.get(stock.symbol)
+            if not indicators:
+                continue
+
+            convergence = indicators.get("ma_convergence_20d")
+            if convergence is None or convergence > max_convergence:
+                continue
+
+            conv_days = indicators.get("ma_convergence_days", 0)
+            if conv_days < min_convergence_days:
+                continue
+
+            score = calc_ma_divergence_score(indicators)
+            if score < min_score:
+                continue
+
+            signals = []
+            sfx = "「均线」"
+            if convergence < 2.0:
+                signals.append("均线高度粘合" + sfx)
+            else:
+                signals.append("均线粘合" + sfx)
+            if indicators.get("ma_bullish_align"):
+                signals.append("多头排列发散" + sfx)
+            if indicators.get("macd_golden_cross"):
+                signals.append("MACD金叉" + sfx)
+            pos_20 = indicators.get("position_20d", 50)
+            if pos_20 < 50:
+                signals.append("低位启动" + sfx)
+            elif pos_20 < 70:
+                signals.append("中位启动" + sfx)
+            vol_ratio = indicators.get("volume_ratio", 1.0)
+            if vol_ratio >= 1.5:
+                signals.append("放量配合" + sfx)
+
+            results.append(ScanResult(
+                symbol=stock.symbol,
+                name=stock.name,
+                strategy=StrategyType.MA_DIVERGENCE,
+                score=round(score, 1),
+                signals=signals,
+                data=stock,
+                metadata={
+                    "convergence": round(convergence, 2),
+                    "convergence_days": conv_days,
+                    "volume_ratio": round(indicators.get("volume_ratio", 1.0), 2),
+                }
+            ))
+
+        results.sort(key=lambda x: x.score, reverse=True)
+        self.logger.info(f"均线发散策略: {len(results)} 只股票")
+        return results
+
     # ─────────────────────────────────────────────
     # 综合评分计算
     # ─────────────────────────────────────────────
@@ -745,6 +913,8 @@ class CompositeStrategy(BaseStrategy):
             "multi_factor": "多因子",
             "ai_technical": "AI技术面",
             "institution": "机构追踪",
+            "box_breakout": "箱体突破",
+            "ma_divergence": "均线发散",
         }
         results = []
         for symbol in filtered_symbols:

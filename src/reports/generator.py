@@ -97,6 +97,8 @@ class ReportGenerator:
                 "multi_factor": "多因子",
                 "ai_technical": "AI技术面",
                 "institution": "机构追踪",
+                "box_breakout": "箱体突破",
+                "ma_divergence": "均线发散",
             }
             for k, v in sorted(weights.items(), key=lambda x: -x[1]):
                 if v > 0:
@@ -111,6 +113,8 @@ class ReportGenerator:
                 "multi_factor": ("📐 多因子策略", "筛选条件：量价换手综合评分≥50"),
                 "ai_technical": ("🤖 AI技术面策略", "筛选条件：AI形态+趋势评分≥75"),
                 "institution": ("🏦 机构追踪策略", "筛选条件：机构数量≥3家、持仓比≥5%"),
+                "box_breakout": ("📦 箱体突破策略", "筛选条件：30日箱体振幅<18%、突破上沿、放量确认"),
+                "ma_divergence": ("📈 均线发散策略", "筛选条件：均线粘合<5%、多头排列、量能配合"),
             }
             lines += ["## 二、各子策略 Top 10 明细", ""]
 

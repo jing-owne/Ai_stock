@@ -118,6 +118,10 @@ class StrategyAgent:
             return self.config.strategy.ai_technical
         elif strategy_type == StrategyType.INSTITUTION:
             return self.config.strategy.institution
+        elif strategy_type == StrategyType.BOX_BREAKOUT:
+            return self.config.strategy.box_breakout
+        elif strategy_type == StrategyType.MA_DIVERGENCE:
+            return self.config.strategy.ma_divergence
         elif strategy_type == StrategyType.COMPOSITE:
             # 综合策略需要所有子策略的配置
             return {
@@ -126,6 +130,8 @@ class StrategyAgent:
                 "multi_factor": self.config.strategy.multi_factor,
                 "ai_technical": self.config.strategy.ai_technical,
                 "institution": self.config.strategy.institution,
+                "box_breakout": self.config.strategy.box_breakout,
+                "ma_divergence": self.config.strategy.ma_divergence,
                 "composite_strategy": self.config.strategy.composite_strategy,
                 "fundamental_filter": self.config.strategy.fundamental_filter,
             }

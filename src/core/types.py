@@ -14,7 +14,9 @@ class StrategyType(Enum):
     MULTI_FACTOR = "multi_factor"           # 多因子策略
     AI_TECHNICAL = "ai_technical"           # AI技术面策略
     INSTITUTION = "institution"             # 机构追踪策略
-    COMPOSITE = "composite"                 # 综合策略（整合5大策略）
+    BOX_BREAKOUT = "box_breakout"           # 箱体突破策略
+    MA_DIVERGENCE = "ma_divergence"         # 均线多头发散策略
+    COMPOSITE = "composite"                 # 综合策略（整合7大策略）
 
 
 @dataclass

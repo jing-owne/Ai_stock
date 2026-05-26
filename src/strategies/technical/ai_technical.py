@@ -22,7 +22,7 @@ class AITechnicalStrategy(BaseStrategy):
     """
 
     def __init__(self, kline_fetcher: Optional[KlineFetcher] = None):
-        self._kline_fetcher = kline_fetcher or KlineFetcher(max_workers=10)
+        self._kline_fetcher = kline_fetcher or KlineFetcher(max_workers=1)
         self.logger = logging.getLogger("AInvest.AITechnicalStrategy")
 
     @property

@@ -59,6 +59,27 @@ class StrategyConfig:
         "min_inst_count": 3,          # 最少机构数
         "min_inst_ratio": 0.05,      # 最少机构持股比例
     })
+
+    # 箱体突破策略
+    box_breakout: Dict[str, Any] = field(default_factory=lambda: {
+        "max_box_range": 18.0,
+        "min_box_range": 3.0,
+        "min_breakout_pct": -1.0,
+        "min_price_change": 2.0,
+        "max_price_change": 7.0,
+        "min_amount": 100_000_000,
+        "min_score": 40,
+    })
+
+    # 均线多头发散策略
+    ma_divergence: Dict[str, Any] = field(default_factory=lambda: {
+        "max_convergence": 5.0,
+        "min_convergence_days": 3,
+        "min_price_change": 1.0,
+        "max_price_change": 7.0,
+        "min_amount": 100_000_000,
+        "min_score": 35,
+    })
     
     # 综合策略权重配置（整合5大策略）
     composite_strategy: Dict[str, Any] = field(default_factory=lambda: {
