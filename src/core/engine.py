@@ -85,14 +85,15 @@ class AInvestEngine:
                 strategy, market_data, **kwargs
             )
             # 从 CompositeStrategy 实例获取各子策略 Top 10
+            # 注意：直接使用缓存的 _last_sub_results，避免重复预获取K线
             from ..strategies.composite_strategy import CompositeStrategy
             comp_strategy = self.strategy_agent.registry.get_strategy(strategy)
             if isinstance(comp_strategy, CompositeStrategy):
                 from ..strategies.composite_strategy import MARKET_STATE_WEIGHTS
                 mstate = comp_strategy._last_market_state
                 weights = comp_strategy._last_weights
-                params = self.strategy_agent._get_strategy_params(strategy)
-                sub_raw = comp_strategy._execute_sub_strategies(market_data, params)
+                # 直接使用缓存的子策略结果，不重新执行
+                sub_raw = getattr(comp_strategy, '_last_sub_results', {}) or {}
                 # 整理每个子策略 Top 10
                 sub_top10: Dict[str, List] = {}
                 for sname in ["volume_surge", "turnover_rank", "multi_factor", "ai_technical", "institution"]:

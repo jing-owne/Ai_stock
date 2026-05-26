@@ -150,6 +150,69 @@ def calc_all_indicators(
         result["vol_ma5"] = float(np.mean(volume[-5:]))
         result["volume_ratio"] = 1.0
 
+    # ── 新增：位置百分位（当前价在N日K线中的位置，0=最低，100=最高）──
+    if n >= 20:
+        close_20 = close[-20:]
+        low_20 = np.min(close_20)
+        high_20 = np.max(close_20)
+        range_20 = high_20 - low_20
+        if range_20 > 0:
+            result["position_20d"] = float((close[-1] - low_20) / range_20 * 100)
+        else:
+            result["position_20d"] = 50.0
+        # 距20日高点距离
+        result["dist_from_20d_high"] = float((high_20 - close[-1]) / close[-1] * 100)
+        # 距20日低点距离
+        result["dist_from_20d_low"] = float((close[-1] - low_20) / close[-1] * 100)
+
+    if n >= 60:
+        close_60 = close[-60:]
+        low_60 = np.min(close_60)
+        high_60 = np.max(close_60)
+        range_60 = high_60 - low_60
+        if range_60 > 0:
+            result["position_60d"] = float((close[-1] - low_60) / range_60 * 100)
+        result["dist_from_60d_high"] = float((high_60 - close[-1]) / close[-1] * 100)
+
+    # ── 新增：连续上涨/下跌天数 ──
+    consecutive_up = 0
+    consecutive_down = 0
+    for i in range(n - 1, 0, -1):
+        if close[i] > close[i - 1]:
+            if consecutive_down == 0:
+                consecutive_up += 1
+            else:
+                break
+        elif close[i] < close[i - 1]:
+            if consecutive_up == 0:
+                consecutive_down += 1
+            else:
+                break
+        else:
+            break
+    result["consecutive_up"] = consecutive_up
+    result["consecutive_down"] = consecutive_down
+
+    # ── 新增：收盘在日内K线的位置（0=最低，100=最高）──
+    if high is not None and low is not None and n > 0:
+        today_high = float(high[-1])
+        today_low = float(low[-1])
+        today_range = today_high - today_low
+        if today_range > 0:
+            result["close_position_today"] = float((close[-1] - today_low) / today_range * 100)
+        else:
+            result["close_position_today"] = 50.0
+
+    # ── 新增：近N日平均振幅 ──
+    if high is not None and low is not None and n >= 5:
+        amplitudes = []
+        for i in range(max(n - 5, 0), n):
+            if close[i] > 0:
+                amp = (high[i] - low[i]) / close[i] * 100
+                amplitudes.append(amp)
+        if amplitudes:
+            result["avg_amplitude_5d"] = float(np.mean(amplitudes))
+
     # RSI
     rsi_arr = calc_rsi(close, 14)
     if not np.isnan(rsi_arr[-1]):
@@ -301,5 +364,137 @@ def calc_trend_score(indicators: Dict[str, float]) -> float:
     rsi = indicators.get("rsi14")
     if rsi is not None and rsi > 50:
         score += 5
+
+    return min(score, 100.0)
+
+
+def calc_position_score(indicators: Dict[str, float]) -> float:
+    """
+    位置评分 (0-100)
+    核心逻辑：低位加分，高位扣分。避免追高被套。
+
+    - 20日位置 < 30%: 身处低位 +20（低吸良机）
+    - 20日位置 30-50%: 中等偏低 +10
+    - 20日位置 50-70%: 中等偏高 +0
+    - 20日位置 70-90%: 接近高位 -10
+    - 20日位置 > 90%: 高位风险 -20（极易被套）
+    """
+    pos = indicators.get("position_20d", 50)
+    if pos < 30:
+        return 20.0
+    elif pos < 50:
+        return 10.0
+    elif pos < 70:
+        return 0.0
+    elif pos < 90:
+        return -10.0
+    else:
+        return -20.0
+
+
+def calc_anti_trap_penalty(
+    indicators: Dict[str, float],
+    change_pct: float,
+    turn_rate: float,
+    amount: float,
+) -> float:
+    """
+    防套惩罚分 (负值，0表示无风险)
+    检测导致"今天买明天套"的典型陷阱模式。
+
+    惩罚规则:
+    - 连续上涨>=4天: -5/天（第4天起）
+    - 距20日高点<2% + 涨幅>3%: -15（高位追涨）
+    - 换手率>8% + 涨幅>5%: -20（投机性放量出货）
+    - 涨幅>7%（接近涨停）: -15（追板风险大）
+    - 20日位置>85% + 振幅>6%: -15（高位巨震出货）
+    - 收盘在日内低位(<30%): -10（尾盘跳水，次日大概率低开）
+    - 连续上涨3天 + 今日放量>3倍: -10（高潮放量=见顶信号）
+    """
+    penalty = 0.0
+    reasons = []
+
+    consecutive_up = indicators.get("consecutive_up", 0)
+
+    # 1. 连续上涨过多
+    if consecutive_up >= 4:
+        extra_days = consecutive_up - 3
+        p = min(extra_days * 5, 20)
+        penalty += p
+        reasons.append(f"连涨{consecutive_up}天(-{p})")
+
+    # 2. 距20日高点太近 + 涨幅不小
+    dist_high = indicators.get("dist_from_20d_high", 100)
+    if dist_high is not None and dist_high < 2.0 and change_pct > 3:
+        penalty += 15
+        reasons.append(f"距20日高仅{dist_high:.1f}%(-15)")
+
+    # 3. 换手率畸高 + 大涨 = 投机出货
+    if turn_rate > 8 and change_pct > 5:
+        penalty += 20
+        reasons.append(f"高换手{turn_rate:.0f}%+大涨(-20)")
+
+    # 4. 接近涨停
+    if change_pct > 7:
+        penalty += 15
+        reasons.append(f"涨幅{change_pct:.1f}%接近涨停(-15)")
+
+    # 5. 高位巨震
+    pos_20 = indicators.get("position_20d", 50)
+    avg_amp = indicators.get("avg_amplitude_5d", 3)
+    if pos_20 > 85 and avg_amp > 6:
+        penalty += 15
+        reasons.append(f"高位巨震(-15)")
+
+    # 6. 尾盘跳水（收盘在日内低位）
+    close_pos = indicators.get("close_position_today", 50)
+    if close_pos < 30 and change_pct > 1:
+        penalty += 10
+        reasons.append(f"尾盘回落(收盘位{close_pos:.0f}%)(-10)")
+
+    # 7. 连涨+放量高潮（经典见顶信号）
+    vol_ratio = indicators.get("volume_ratio", 1.0)
+    if consecutive_up >= 3 and vol_ratio > 3.0:
+        penalty += 10
+        reasons.append(f"连涨{consecutive_up}天+放量{vol_ratio:.1f}倍(-10)")
+
+    return round(min(penalty, 50), 1)
+
+
+def calc_low_absorb_score(indicators: Dict[str, float]) -> float:
+    """
+    低吸评分 (0-100)
+    识别适合低吸的信号：回调到位、底部企稳
+
+    加分规则:
+    - 连续下跌2-3天: +15（回调中）
+    - 连续下跌>=4天: +25（深度回调，超跌反弹概率大）
+    - 20日位置<30: +20（处于低位）
+    - RSI<35: +15（超卖）
+    - MACD金叉: +20（趋势反转信号）
+    - 收盘在日内高位(>70%): +10（日内企稳信号）
+    """
+    score = 0.0
+
+    consecutive_down = indicators.get("consecutive_down", 0)
+    if consecutive_down >= 4:
+        score += 25
+    elif consecutive_down >= 2:
+        score += 15
+
+    pos_20 = indicators.get("position_20d", 50)
+    if pos_20 < 30:
+        score += 20
+
+    rsi = indicators.get("rsi14")
+    if rsi is not None and rsi < 35:
+        score += 15
+
+    if indicators.get("macd_golden_cross"):
+        score += 20
+
+    close_pos = indicators.get("close_position_today", 50)
+    if close_pos > 70:
+        score += 10
 
     return min(score, 100.0)

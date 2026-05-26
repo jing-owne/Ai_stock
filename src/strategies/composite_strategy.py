@@ -18,7 +18,7 @@ import logging
 
 from .base import BaseStrategy
 from ..core.types import StockData, ScanResult, StrategyType
-from ..core.indicators import calc_all_indicators, calc_technical_score, calc_pattern_score, calc_trend_score
+from ..core.indicators import calc_all_indicators, calc_technical_score, calc_pattern_score, calc_trend_score, calc_position_score, calc_anti_trap_penalty, calc_low_absorb_score
 from ..data.kline_fetcher import KlineFetcher
 
 
@@ -79,7 +79,7 @@ class CompositeStrategy(BaseStrategy):
         self.logger = logging.getLogger("AInvest.CompositeStrategy")
         self._last_market_state: str = "volatile"
         self._last_weights: Dict[str, float] = {}
-        self._kline_fetcher = kline_fetcher or KlineFetcher(max_workers=10)
+        self._kline_fetcher = kline_fetcher or KlineFetcher(max_workers=5, delay_per_request=0.1)
         # 缓存K线数据和技术指标，避免重复获取
         self._kline_cache: Dict[str, List[StockData]] = {}
         self._indicator_cache: Dict[str, Dict[str, float]] = {}
@@ -262,17 +262,32 @@ class CompositeStrategy(BaseStrategy):
         return sub_results
 
     def _execute_volume_surge(self, market_data, params) -> List[ScanResult]:
-        """放量上涨策略 — 使用真实5日均量比，K线不可用时降级为行情指标估算"""
+        """放量上涨策略 — 使用真实5日均量比 + 新增防套过滤
+
+        v2.0 新增过滤:
+        - 最大涨幅限制（超过视为涨停/追高风险）
+        - 最大连续上涨天数限制
+        - 20日位置过高过滤（高位放量=出货风险）
+        - 振幅过大过滤（巨震风险）
+        """
         cfg = params.get("volume_surge", {}) if params else {}
         min_ratio = cfg.get("min_volume_ratio", 2.0)
         min_change = cfg.get("min_price_change", 1.0)
+        max_change = cfg.get("max_price_change", 8.0)
         min_amount = cfg.get("min_amount", 100_000_000)
+        max_consecutive_up = cfg.get("max_consecutive_up", 3)
+        max_position_20d = cfg.get("max_position_20d", 85)
+        max_amplitude = cfg.get("max_amplitude", 8.0)
 
         results = []
         max_amount = max((s.amount for s in market_data), default=1)
+        filtered_count = {"high_change": 0, "consecutive": 0, "position": 0, "amplitude": 0}
 
         for stock in market_data:
             if stock.change_pct < min_change or stock.amount < min_amount:
+                continue
+            if stock.change_pct > max_change:
+                filtered_count["high_change"] += 1
                 continue
 
             # 从K线指标缓存获取真实放量倍数
@@ -280,17 +295,30 @@ class CompositeStrategy(BaseStrategy):
             if indicators and "volume_ratio" in indicators:
                 volume_ratio = indicators["volume_ratio"]
             elif not getattr(self, '_kline_available', True):
-                # K线数据不可用，使用换手率估算放量倍数
-                # 换手率>5% 大致对应放量2倍以上（经验估算）
                 est_ratio = stock.turn_rate / 2.5 if stock.turn_rate > 0 else 1.0
                 volume_ratio = round(est_ratio, 2)
                 if volume_ratio < min_ratio:
                     continue
             else:
-                # 无K线数据，跳过（无法计算真实放量）
                 continue
 
             if volume_ratio < min_ratio:
+                continue
+
+            # ── v2.0 新增防套过滤 ──
+            # 连续上涨过多 → 不追
+            if indicators and indicators.get("consecutive_up", 0) > max_consecutive_up:
+                filtered_count["consecutive"] += 1
+                continue
+
+            # 20日高位放量 → 警惕出货
+            if indicators and indicators.get("position_20d", 50) > max_position_20d:
+                filtered_count["position"] += 1
+                continue
+
+            # 振幅过大（可用今日振幅或近5日平均）
+            if indicators and indicators.get("avg_amplitude_5d", 3) > max_amplitude:
+                filtered_count["amplitude"] += 1
                 continue
 
             volume_score = min(volume_ratio / min_ratio * 20, 40)
@@ -308,6 +336,10 @@ class CompositeStrategy(BaseStrategy):
                 signals.append("强势上涨" + sfx)
             elif stock.change_pct >= 3.0:
                 signals.append("大幅上涨" + sfx)
+            # 添加位置标签
+            pos_20 = indicators.get("position_20d", 50) if indicators else 50
+            if pos_20 < 30:
+                signals.append("低位启动" + sfx)
 
             results.append(ScanResult(
                 symbol=stock.symbol,
@@ -318,6 +350,14 @@ class CompositeStrategy(BaseStrategy):
                 data=stock,
                 metadata={"volume_ratio": round(volume_ratio, 2)}
             ))
+
+        if any(v > 0 for v in filtered_count.values()):
+            self.logger.info(
+                f"放量策略防套过滤: 高涨幅={filtered_count['high_change']} "
+                f"连涨过多={filtered_count['consecutive']} "
+                f"高位={filtered_count['position']} "
+                f"巨震={filtered_count['amplitude']}"
+            )
 
         results.sort(key=lambda x: x.score, reverse=True)
         return results
@@ -583,24 +623,53 @@ class CompositeStrategy(BaseStrategy):
         sub_results: Dict[str, Dict[str, ScanResult]],
         weights: Dict[str, float]
     ) -> Dict[str, float]:
-        """计算每只股票的综合评分 = Σ(子策略评分 × 权重) + 策略数量加分"""
+        """计算每只股票的综合评分
+
+        新算法 (v2.0):
+        base = Σ(子策略评分 × 权重)                # 策略共识分(基数)
+        score = base                                # 保留基础分
+              + 位置调整(-20 ~ +20)                 # 位置因子(加分/扣分)
+              + 低吸加分(0 ~ +20)                   # 低吸因子
+              - 防套惩罚(0 ~ -50)                   # 防套扣分
+              + 策略数量加分(0 ~ +5)                # 多策略确认(缩减版)
+        """
         scores = {}
-        STRATEGY_NAMES = {
-            "volume_surge": "放量上涨",
-            "turnover_rank": "成交额排名",
-            "multi_factor": "多因子",
-            "ai_technical": "AI技术面",
-            "institution": "机构追踪",
-        }
         for symbol, strategies in sub_results.items():
-            total = 0.0
+            # 1. 策略共识分 (基础)
+            strategy_total = 0.0
             for sname, result in strategies.items():
                 w = weights.get(sname, 0.0)
-                total += min(result.score, 100) * w
-            # 策略数量加分：被更多策略命中说明共识更强
+                strategy_total += min(result.score, 100) * w
+
+            # 2. 位置评分 (-20 ~ +20)
+            indicators = self._indicator_cache.get(symbol, {})
+            position_score = calc_position_score(indicators)
+
+            # 3. 低吸评分 (0 ~ +20, 截断)
+            low_absorb_score = min(calc_low_absorb_score(indicators), 20)
+
+            # 4. 防套惩罚 (0 ~ -50)
+            stock_data = None
+            for result in strategies.values():
+                if result.data:
+                    stock_data = result.data
+                    break
+            anti_trap = 0.0
+            if stock_data and indicators:
+                anti_trap = calc_anti_trap_penalty(
+                    indicators,
+                    stock_data.change_pct,
+                    stock_data.turn_rate,
+                    stock_data.amount
+                )
+
+            # 5. 策略数量加分 (0 ~ +5, 缩减版)
             count = len(strategies)
-            diversity_bonus = min(count * 2.0, 8.0)  # 最多8分加分
-            scores[symbol] = round(total + diversity_bonus, 2)
+            diversity_bonus = min(count * 1.5, 5.0)
+
+            total = round(strategy_total + position_score + low_absorb_score + diversity_bonus - anti_trap, 2)
+            scores[symbol] = total
+
         return scores
 
     # ─────────────────────────────────────────────
@@ -695,10 +764,41 @@ class CompositeStrategy(BaseStrategy):
             # 把命中策略名称作为前缀信号，方便报告展示
             strategy_signal = "+".join(hit_strategies)
 
+            # 获取K线指标用于评分明细
+            indicators = self._indicator_cache.get(symbol, {})
+            stock_data = next((r.data for r in strat_map.values() if r.data), None)
+
+            # 计算防套风险标签
+            trap_flags = []
+            if stock_data and indicators:
+                penalty = calc_anti_trap_penalty(
+                    indicators,
+                    stock_data.change_pct,
+                    stock_data.turn_rate,
+                    stock_data.amount
+                )
+                if penalty >= 20:
+                    trap_flags.append("高风险")
+                elif penalty >= 10:
+                    trap_flags.append("中风险")
+                elif penalty > 0:
+                    trap_flags.append("注意")
+                else:
+                    trap_flags.append("安全")
+
+                pos_20 = indicators.get("position_20d", 50)
+                if pos_20 > 80:
+                    trap_flags.append("高位")
+                elif pos_20 < 30:
+                    trap_flags.append("低位")
+
             metadata = {
                 "composite_score": score,
                 "strategy_count": len(strat_map),
                 "hit_strategies": hit_strategies,
+                "position_20d": round(indicators.get("position_20d", 50), 1),
+                "consecutive_up": int(indicators.get("consecutive_up", 0)),
+                "trap_flags": trap_flags,
             }
             for sname, result in strat_map.items():
                 metadata[f"{sname}_score"] = result.score
