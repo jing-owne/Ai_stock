@@ -304,14 +304,12 @@ def generate_bond_content(
     lines.append("【今日可申购新债】")
     lines.append("")
     if bonds_today:
-        # 表格头
-        lines.append(f"债券名称 | 申购代码 | 发行价 | 评级 | 申购上限")
-        lines.append(f"--- | --- | --- | --- | ---")
+        # 表格头（手机端精简：去申购代码、发行价）
+        lines.append(f"债券名称 | 评级 | 申购上限")
+        lines.append(f"--- | --- | ---")
         for b in bonds_today:
             lines.append(
                 f"{b['bond_name']}（{b['bond_code']}） | "
-                f"{b['apply_code']} | "
-                f"¥{b['price']} | "
                 f"{b.get('rating', '待查')} | "
                 f"{b['max_shares']}张"
             )
