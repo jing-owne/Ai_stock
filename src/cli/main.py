@@ -1,5 +1,5 @@
 """
-Marcus 策略小助手 (AInvest) 命令行工具 · 可转债打新提醒
+Marcus 策略小助手 (AInvest) 命令行工具 · 公共模块重构
 """
 import sys
 import argparse
