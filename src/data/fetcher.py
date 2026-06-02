@@ -14,14 +14,14 @@ logger = logging.getLogger("AInvest.DataFetcher")
 
 class DataFetcher:
     """数据获取器"""
-    
+
     def __init__(self):
         self.logger = logger
     
     def get_daily_quote(self) -> str:
         """
         获取每日一言（hitokoto）
-        
+
         Returns:
             每日一言文本
         """

@@ -32,16 +32,15 @@ from typing import List, Dict, Optional, Tuple
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from check_trading import is_trading_day
-from src.reports.email_sender import EmailSender, format_email_html_responsive
+from src.reports.email_sender import format_email_html_responsive
+from src.common.smtp_sender import SMTPSender
 from src.core.config import Config, EmailConfig
 from src.data.fetcher import DataFetcher
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    datefmt='%H:%M:%S'
-)
-logger = logging.getLogger("BondReminder")
+from src.common.logger import get_logger, setup_root_logger
+
+setup_root_logger()
+logger = get_logger("BondReminder")
 
 
 # ── 模拟测试数据 ──
@@ -541,15 +540,21 @@ def send_bond_email(
         f.write(html_content)
     logger.info(f"HTML预览: {preview_path}")
 
-    # 创建 EmailSender 发邮件
-    sender = EmailSender(bond_cfg)
+    # 使用公共SMTP发送器
+    sender = SMTPSender(
+        smtp_server=bond_cfg.smtp_server,
+        smtp_port=bond_cfg.smtp_port,
+        smtp_user=bond_cfg.smtp_user,
+        smtp_password=bond_cfg.smtp_password,
+        sender_name=bond_cfg.sender_name,
+    )
 
     return sender.send(
         subject=subject,
-        html_content=text_content,  # send() 内部会调 format_email_html_responsive
+        html_content=html_content,
         to_emails=bond_cfg.to_emails,
-        cc_emails=[] if debug else bond_cfg.cc_emails,
-        use_responsive=True,
+        cc_emails=bond_cfg.cc_emails,
+        debug=debug,
     )
 
 
