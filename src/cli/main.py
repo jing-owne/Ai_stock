@@ -1,5 +1,5 @@
 """
-Marcus 策略小助手 (AInvest) 命令行工具
+Marcus 策略小助手 (AInvest) 命令行工具 · 可转债打新提醒
 """
 import sys
 import argparse
@@ -168,7 +168,7 @@ def cmd_backtest(args):
 def create_parser() -> argparse.ArgumentParser:
     """创建命令行解析器"""
     parser = argparse.ArgumentParser(
-        description="Marcus策略小助手(AInvest) - AI驱动的量化策略选股平台",
+        description="Marcus策略小助手(AInvest) - AI驱动的量化策略选股平台 · 可转债打新提醒",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     
