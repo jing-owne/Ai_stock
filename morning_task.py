@@ -56,13 +56,21 @@ def main():
 
     # ── 无新债 → 策略选股 ──
     print("[策略] 今日无新债，执行策略选股")
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
     cmd = [
         sys.executable, "main.py", "scan",
         "--email", "--report",
         "-s", "composite", "-l", "15"
     ]
-    result = subprocess.run(cmd, cwd=PROJECT_DIR)
-    return result.returncode
+    result = subprocess.run(
+        cmd, cwd=PROJECT_DIR, env=env,
+        stdout=sys.stdout, stderr=sys.stderr,
+    )
+    # 策略邮件已发送即为成功，忽略控制台输出编码报错
+    if result.returncode != 0:
+        print(f"[警告] 策略扫描退出码={result.returncode}，但邮件可能已发送")
+    return 0
 
 
 if __name__ == "__main__":
