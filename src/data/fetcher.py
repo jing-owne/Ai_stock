@@ -332,14 +332,47 @@ class DataFetcher:
             self.logger.error(f"获取打新日历失败: {e}")
             return []
 
+    def _enrich_bond_ratings(self, bond_list: List[Dict]) -> None:
+        """
+        用 bond_zh_cov_info 逐只补充可转债的评级和申购上限
+        """
+        import akshare as ak
+        import pandas as pd
+        for bond in bond_list:
+            bond_code = bond.get('bond_code', '')
+            if not bond_code:
+                bond['rating'] = '待查'
+                bond['max_shares'] = '1000手(10000张)'
+                continue
+            try:
+                df = ak.bond_zh_cov_info(symbol=bond_code)
+                if df is not None and not df.empty:
+                    rating = str(df.iloc[0].get('RATING', ''))
+                    online_aau = df.iloc[0].get('ONLINE_GENERAL_AAU', None)
+                    bond['rating'] = rating if rating and rating not in ('nan', 'None', '') else '待查'
+                    if online_aau and not pd.isna(online_aau):
+                        lots = int(online_aau)
+                        bond['max_shares'] = f'{lots}手({lots*10}张)'
+                    else:
+                        bond['max_shares'] = '1000手(10000张)'
+                else:
+                    bond['rating'] = '待查'
+                    bond['max_shares'] = '1000手(10000张)'
+            except Exception as e:
+                self.logger.debug(f"获取{bond_code}评级失败: {e}")
+                bond['rating'] = '待查'
+                bond['max_shares'] = '1000手(10000张)'
+
     def get_bond_calendar(self, max_days: int = 7) -> List[Dict]:
         """
         获取近期可转债申购日历
 
         数据源优先级:
-        1. bond_zh_cov_info_ths（同花顺可转债信息，最可靠，含申购日期/转股价/评级）
+        1. bond_zh_cov_info_ths（同花顺可转债信息，最可靠，含申购日期/转股价）
         2. bond_cov_comparison（东方财富，作为备选）
         3. stock_ipo_ths（同花顺IPO日历，可转债兜底）
+
+        评级和申购上限通过 bond_zh_cov_info(symbol=code) 逐只补充
 
         Args:
             max_days: 最多显示未来几天的可申购可转债
@@ -389,11 +422,13 @@ class DataFetcher:
                         'conv_price': conv_price if conv_price not in ('nan', '-', '') else '待定',
                         'amount': f'{float(amount):.2f}亿' if amount.replace('.', '').isdigit() else amount,
                         'lottery_date': lottery_date if lottery_date not in ('nan', 'NaT', '') else '-',
-                        'rating': '待查',
+                        'rating': '',
+                        'max_shares': '',
                         'source': '同花顺',
                     })
 
                 if bond_list:
+                    self._enrich_bond_ratings(bond_list)
                     self.logger.info(f"获取可转债日历(同花顺): 未来{max_days}天共{len(bond_list)}只")
                     return bond_list
         except Exception as e:

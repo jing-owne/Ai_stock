@@ -94,6 +94,46 @@ def has_bonds_today() -> bool:
     return len(bonds) > 0
 
 
+def _enrich_bond_detail(bond: Dict) -> Dict:
+    """用 bond_zh_cov_info 补充单只可转债的评级和申购上限"""
+    import akshare as ak
+    import pandas as pd
+    bond_code = bond.get('bond_code', '')
+    if not bond_code:
+        bond['rating'] = '待查'
+        bond['max_shares'] = '1000手(10000张)'
+        return bond
+    try:
+        df = ak.bond_zh_cov_info(symbol=bond_code)
+        if df is not None and not df.empty:
+            rating = str(df.iloc[0].get('RATING', ''))
+            online_aau = df.iloc[0].get('ONLINE_GENERAL_AAU', None)
+            if rating and rating not in ('nan', 'None', ''):
+                bond['rating'] = rating
+            else:
+                bond['rating'] = '待查'
+            if online_aau and not pd.isna(online_aau):
+                lots = int(online_aau)
+                bond['max_shares'] = f'{lots}手({lots*10}张)'
+            else:
+                bond['max_shares'] = '1000手(10000张)'
+        else:
+            bond['rating'] = '待查'
+            bond['max_shares'] = '1000手(10000张)'
+    except Exception as e:
+        logger.debug(f"获取{bond_code}评级失败: {e}")
+        bond['rating'] = '待查'
+        bond['max_shares'] = '1000手(10000张)'
+    return bond
+
+
+def _enrich_bonds(bonds: List[Dict]) -> List[Dict]:
+    """批量补充可转债评级和申购上限"""
+    for bond in bonds:
+        _enrich_bond_detail(bond)
+    return bonds
+
+
 def get_new_bonds_today() -> List[Dict]:
     """获取今日可申购新债 — 数据来源: 同花顺 bond_zh_cov_info_ths → stock_ipo_ths 兜底"""
     import akshare as ak
@@ -122,8 +162,8 @@ def get_new_bonds_today() -> List[Dict]:
                 'apply_code': str(row.get('申购代码', '')),
                 'apply_date': today.strftime('%m-%d'),
                 'price': str(row.get('转股价格', '100.00')),
-                'rating': '待查',
-                'max_shares': '-',
+                'rating': '',
+                'max_shares': '',
             })
         return bonds
 
@@ -156,8 +196,8 @@ def get_new_bonds_today() -> List[Dict]:
                 'apply_code': str(row.get('申购代码', '')),
                 'apply_date': today.strftime('%m-%d'),
                 'price': str(row.get('发行价格', '100.00')),
-                'rating': '待查',
-                'max_shares': '-',
+                'rating': '',
+                'max_shares': '',
             })
         return bonds
 
@@ -165,6 +205,7 @@ def get_new_bonds_today() -> List[Dict]:
         bonds = _try_ths()
         if not bonds:
             bonds = _try_ipo()
+        bonds = _enrich_bonds(bonds)
         logger.info(f"今日可申购新债: {len(bonds)} 只")
         return bonds
     except ImportError:
@@ -231,11 +272,13 @@ def get_future_bonds() -> Tuple[List[Dict], str]:
     try:
         bonds = _try_ths()
         if bonds:
+            bonds = _enrich_bonds(bonds)
             logger.info(f"未来可申购可转债: {len(bonds)} 只 (同花顺)")
             return bonds, source
 
         bonds = _try_cov()
         if bonds:
+            bonds = _enrich_bonds(bonds)
             source = "东方财富 bond_cov_comparison"
             logger.info(f"未来可申购可转债: {len(bonds)} 只 (东财)")
             return bonds, source
@@ -361,7 +404,7 @@ def generate_bond_content(
             lines.append(
                 f"{b['bond_name']}（{b['bond_code']}） | "
                 f"{b.get('rating', '待查')} | "
-                f"{b['max_shares']}张"
+                f"{b['max_shares']}"
             )
         lines.append("")
         lines.append(f"📊 共 {len(bonds_today)} 只可申购新债")
