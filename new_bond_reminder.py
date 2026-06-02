@@ -279,12 +279,14 @@ def get_future_bonds() -> Tuple[List[Dict], str]:
         bonds = _try_ths()
         if bonds:
             bonds = _enrich_bonds(bonds)
+            bonds.sort(key=lambda b: b.get('apply_date', ''), reverse=True)
             logger.info(f"未来可申购可转债: {len(bonds)} 只 (同花顺)")
             return bonds, source
 
         bonds = _try_cov()
         if bonds:
             bonds = _enrich_bonds(bonds)
+            bonds.sort(key=lambda b: b.get('apply_date', ''), reverse=True)
             source = "东方财富 bond_cov_comparison"
             logger.info(f"未来可申购可转债: {len(bonds)} 只 (东财)")
             return bonds, source
