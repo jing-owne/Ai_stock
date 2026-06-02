@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-A股交易日检查脚本
-- 检查今天是否为交易日（排除周六日 + 法定节假日 + 处理补班日）
+A股交易日检查脚本（动态版）
+- 优先使用 akshare.tool_trade_date_hist_sina 动态判断
+- API 覆盖不到的未来日期 → 周末 + 法定节假日降级
 - 检查当前是否在交易时段 (9:15-15:30)
-- 支持 --force 强制执行（跳过检查）
-- 支持东方财富接口二次验证
+- 支持 --force 强制执行
 
 用法：
     python check_trading.py           # 正常检查
@@ -15,6 +15,9 @@ A股交易日检查脚本
     0 = 可以执行（交易日 + 交易时段）
     1 = 跳过（非交易日）
     2 = 跳过（非交易时段）
+
+函数导出：
+    from check_trading import is_trading_day, is_trading_hour
 """
 
 import datetime
@@ -22,81 +25,137 @@ import sys
 import json
 import urllib.request
 import urllib.error
-
+from typing import Tuple, Set, Optional
 
 # ═══════════════════════════════════════════════════
-# 2026年A股休市安排（来源：上交所/深交所/北交所联合公告）
-# ═══════════════════════════════════════════════════
-
-HOLIDAYS_2026 = [
-    # (名称, 开始日期, 结束日期)
-    ("元旦",       datetime.date(2026, 1, 1),  datetime.date(2026, 1, 3)),
-    ("春节",       datetime.date(2026, 2, 15), datetime.date(2026, 2, 23)),
-    ("清明节",     datetime.date(2026, 4, 4),  datetime.date(2026, 4, 6)),
-    ("劳动节",     datetime.date(2026, 5, 1),  datetime.date(2026, 5, 5)),
-    ("端午节",     datetime.date(2026, 6, 19), datetime.date(2026, 6, 21)),
-    ("中秋节",     datetime.date(2026, 9, 25), datetime.date(2026, 9, 27)),
-    ("国庆节",     datetime.date(2026, 10, 1), datetime.date(2026, 10, 7)),
-]
-
-# 2026年补班交易日（周末但交易所开市）
-# 上交所暂未公布2026年周末补班交易日，如有后续公告在此补充
-# 格式：{datetime.date(2026, X, X), ...}
-MAKEUP_TRADING_DAYS_2026: set = set()
-
-# 额外已知周末休市（交易所公告明确标注的周末）
-EXTRA_WEEKEND_CLOSED_2026 = {
-    datetime.date(2026, 1, 4),    # 元旦后周日
-    datetime.date(2026, 2, 14),   # 春节前周六
-    datetime.date(2026, 2, 28),   # 春节后周六
-    datetime.date(2026, 5, 9),    # 劳动节后周六
-    datetime.date(2026, 9, 20),   # 国庆前周日
-    datetime.date(2026, 10, 10),  # 国庆后周六
-}
-
 # 交易时段
+# ═══════════════════════════════════════════════════
+
 TRADING_START = datetime.time(9, 15)
 TRADING_END = datetime.time(15, 30)
 
+# ═══════════════════════════════════════════════════
+# 法定节假日（降级方案：API 覆盖不到的未来日期使用）
+# 每年需更新一次（上交所通常12月发布下一年安排）
+# ═══════════════════════════════════════════════════
+
+HOLIDAYS_BY_YEAR = {
+    2026: [
+        ("元旦",     datetime.date(2026, 1, 1),  datetime.date(2026, 1, 3)),
+        ("春节",     datetime.date(2026, 2, 15), datetime.date(2026, 2, 23)),
+        ("清明节",   datetime.date(2026, 4, 4),  datetime.date(2026, 4, 6)),
+        ("劳动节",   datetime.date(2026, 5, 1),  datetime.date(2026, 5, 5)),
+        ("端午节",   datetime.date(2026, 6, 19), datetime.date(2026, 6, 21)),
+        ("中秋节",   datetime.date(2026, 9, 25), datetime.date(2026, 9, 27)),
+        ("国庆节",   datetime.date(2026, 10, 1), datetime.date(2026, 10, 7)),
+    ],
+}
+
+# 已知额外周末休市（降级用）
+EXTRA_WEEKEND_CLOSED = {
+    datetime.date(2026, 1, 4),
+    datetime.date(2026, 2, 14),
+    datetime.date(2026, 2, 28),
+    datetime.date(2026, 5, 9),
+    datetime.date(2026, 9, 20),
+    datetime.date(2026, 10, 10),
+}
 
 # ═══════════════════════════════════════════════════
-# 核心函数
+# 动态交易日历缓存
 # ═══════════════════════════════════════════════════
 
-def is_holiday(date_obj: datetime.date) -> tuple:
-    """检查是否为法定节假日休市，返回 (是否休市, 假期名称)"""
-    for name, start, end in HOLIDAYS_2026:
-        if start <= date_obj <= end:
-            return True, name
-    return False, None
+_trading_days_cache: Optional[Set[datetime.date]] = None
+_cache_max_date: Optional[datetime.date] = None
 
 
-def is_trading_day(date_obj: datetime.date = None) -> tuple:
+def _load_trading_calendar() -> Tuple[Set[datetime.date], Optional[datetime.date]]:
     """
-    检查是否为A股交易日
+    从 akshare 加载动态交易日历
+    返回 (交易日集合, 最大覆盖日期)
+    """
+    global _trading_days_cache, _cache_max_date
+
+    if _trading_days_cache is not None:
+        return _trading_days_cache, _cache_max_date
+
+    try:
+        import akshare as ak
+        df = ak.tool_trade_date_hist_sina()
+        dates = set()
+        max_date = None
+        for d in df['trade_date']:
+            if isinstance(d, datetime.date):
+                dates.add(d)
+                if max_date is None or d > max_date:
+                    max_date = d
+        _trading_days_cache = dates
+        _cache_max_date = max_date
+        return dates, max_date
+    except Exception:
+        # akshare 不可用，使用降级方案
+        return set(), None
+
+
+def invalidate_cache():
+    """清除交易日历缓存（强制下次重新加载）"""
+    global _trading_days_cache, _cache_max_date
+    _trading_days_cache = None
+    _cache_max_date = None
+
+
+def is_trading_day(date_obj: datetime.date = None) -> Tuple[bool, str]:
+    """
+    检查是否为A股交易日（动态版）
+
+    优先级：
+      1. akshare 动态交易日历（覆盖 1990～约2026年底）
+      2. 周末判断（周六日休市）
+      3. 法定节假日降级（硬编码，仅用于API未覆盖的年份）
+
     返回 (是否交易日, 原因说明)
     """
     if date_obj is None:
         date_obj = datetime.date.today()
 
-    # 补班交易日（周末但交易所开市）
-    if date_obj in MAKEUP_TRADING_DAYS_2026:
-        return True, "补班交易日"
+    # ── 优先：动态交易日历 ──
+    trading_days, max_date = _load_trading_calendar()
+    if trading_days and (max_date is None or date_obj <= max_date):
+        if date_obj in trading_days:
+            return True, "交易日（动态日历）"
+        else:
+            # 在日历覆盖范围内但不在交易日集合中
+            # 尝试识别具体假期
+            holiday_name = _find_holiday_name(date_obj)
+            if holiday_name:
+                return False, f"{holiday_name}假期休市（动态日历）"
+            return False, f"非交易日（动态日历）"
 
-    # 周六日休市
-    if date_obj.weekday() >= 5:  # 5=周六, 6=周日
+    # ── 降级：周末 + 法定节假日 ──
+    if date_obj.weekday() >= 5:
         day_name = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][date_obj.weekday()]
-        return False, f"{day_name}休市"
+        return False, f"{day_name}休市（降级判断）"
 
-    # 法定节假日休市
-    holiday, name = is_holiday(date_obj)
-    if holiday:
-        return False, f"{name}假期休市"
+    holiday_name = _find_holiday_name(date_obj)
+    if holiday_name:
+        return False, f"{holiday_name}假期休市（降级判断）"
 
-    return True, "交易日"
+    return True, "交易日（降级判断）"
 
 
-def is_trading_hour(now: datetime.datetime = None) -> tuple:
+def _find_holiday_name(date_obj: datetime.date) -> Optional[str]:
+    """在硬编码节假日中查找日期"""
+    for year, holidays in HOLIDAYS_BY_YEAR.items():
+        for name, start, end in holidays:
+            if start <= date_obj <= end:
+                return name
+    # 额外周末休市
+    if date_obj in EXTRA_WEEKEND_CLOSED:
+        return "调休"
+    return None
+
+
+def is_trading_hour(now: datetime.datetime = None) -> Tuple[bool, str]:
     """
     检查是否在交易时段内
     返回 (是否在交易时段, 原因说明)
@@ -111,43 +170,8 @@ def is_trading_hour(now: datetime.datetime = None) -> tuple:
     return True, "交易时段"
 
 
-def verify_with_eastmoney(date_obj: datetime.date) -> bool:
-    """
-    通过东方财富交易日历接口二次验证
-    返回 True=交易日, False=非交易日, None=接口不可用
-    """
-    try:
-        url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
-        params = {
-            "secid": "1.000001",  # 上证指数
-            "fields1": "f1",
-            "fields2": "f51,f52",
-            "klt": "101",         # 日K
-            "fqt": "1",
-            "beg": date_obj.strftime("%Y%m%d"),
-            "end": date_obj.strftime("%Y%m%d"),
-        }
-        query = "&".join(f"{k}={v}" for k, v in params.items())
-        full_url = f"{url}?{query}"
-
-        req = urllib.request.Request(full_url, headers={
-            "User-Agent": "Mozilla/5.0",
-            "Referer": "https://quote.eastmoney.com/",
-        })
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode())
-
-        klines = data.get("data", {}).get("klines", [])
-        if klines:
-            return True
-        else:
-            return False
-    except Exception:
-        return None  # 接口不可用，使用本地判断
-
-
 # ═══════════════════════════════════════════════════
-# 主函数
+# 命令行入口
 # ═══════════════════════════════════════════════════
 
 def main():
@@ -156,13 +180,19 @@ def main():
 
     if list_holidays:
         print("=" * 60)
-        print("  2026年A股休市安排")
+        print("  A股交易日历（动态 + 降级）")
         print("=" * 60)
-        for name, start, end in HOLIDAYS_2026:
-            days = (end - start).days + 1
-            print(f"  {name:　<6s}  {start} ~ {end}  (共{days}天)")
+        trading_days, max_date = _load_trading_calendar()
+        if trading_days:
+            print(f"  动态日历: {len(trading_days)} 个交易日")
+            if max_date:
+                print(f"  覆盖范围: 1990-12-19 ~ {max_date}")
         print()
-        print("  补班交易日: " + ("暂无" if not MAKEUP_TRADING_DAYS_2026 else ", ".join(str(d) for d in sorted(MAKEUP_TRADING_DAYS_2026))))
+        for year in sorted(HOLIDAYS_BY_YEAR.keys()):
+            print(f"  {year}年法定节假日（降级方案）:")
+            for name, start, end in HOLIDAYS_BY_YEAR[year]:
+                days = (end - start).days + 1
+                print(f"    {name}: {start} ~ {end} ({days}天)")
         return
 
     if force:
@@ -172,25 +202,17 @@ def main():
     now = datetime.datetime.now()
     today = now.date()
 
-    # 1. 本地判断交易日
+    # 1. 交易日判断
     is_td, reason = is_trading_day(today)
     if not is_td:
         print(f"[跳过] {today} {reason}")
         sys.exit(1)
 
-    # 2. 本地判断交易时段
+    # 2. 交易时段判断
     is_th, time_reason = is_trading_hour(now)
     if not is_th:
         print(f"[跳过] {today} 交易日但{time_reason}")
         sys.exit(2)
-
-    # 3. 东方财富接口二次验证（可选，失败不影响）
-    eastmoney_result = verify_with_eastmoney(today)
-    if eastmoney_result is False:
-        print(f"[跳过] {today} 本地判断为交易日，但东方财富接口返回无交易数据，跳过")
-        sys.exit(1)
-    elif eastmoney_result is None:
-        pass  # 接口不可用，忽略
 
     print(f"[执行] {today} {now.strftime('%H:%M')} {reason}，{time_reason}")
     sys.exit(0)
