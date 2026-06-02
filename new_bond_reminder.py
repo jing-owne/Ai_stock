@@ -79,6 +79,12 @@ MOCK_APPROVED = [
 MOCK_PIPELINE = {
     'stats': {'approved_waiting': 18, 'passed_committee': 11,
               'upcoming_review': 6, 'inquiry_done': 6},
+    'lists': {
+        'approved_waiting': ['南芯科技', '金帝股份', '豪能股份', '科博达', '维科精密', '中汽股份', '四方科技', '圣泉集团'],
+        'passed_committee': ['肇民科技', '奥普特', '中科曙光(已提交注册)', '炬申股份(已提交注册)', '特宝生物(已提交注册)'],
+        'upcoming_review': ['赛恩斯', '振华股份', '先锋精科', '久吾高科', '中仑新材', '千红制药'],
+        'completed_dividend': ['春风动力', '爱科科技', '金三江', '迪威尔', '华翔股份', '科博达', '中汽股份'],
+    },
     'source_url': 'https://caifuhao.eastmoney.com/news/20260530151213071344710',
     'source_name': '东方财富财富号·待发可转债统计表(截至2026-05-30)',
 }
@@ -295,56 +301,41 @@ def get_future_bonds() -> Tuple[List[Dict], str]:
 def get_approved_bond_news() -> Tuple[List[Dict], Dict, str]:
     """
     获取已获批可转债动态
-    来源: 巨潮资讯(bond_cov_stock_issue_cninfo) + 东方财富财富号
+    只保留进行中/已获批待发的可转债，过滤掉已发行的历史数据
+    来源: 东方财富财富号（每周更新）
     """
-    import pandas as pd
-    today = datetime.now().date()
-    cutoff = today - timedelta(days=90)
-
-    approved_list = []
-    source = "巨潮资讯网(bond_cov_stock_issue_cninfo)"
-
-    try:
-        import akshare as ak
-        df = ak.bond_cov_stock_issue_cninfo()
-        if df is not None and not df.empty:
-            df['公告日期_dt'] = pd.to_datetime(df['公告日期'], errors='coerce')
-            recent = df[df['公告日期_dt'] >= pd.Timestamp(cutoff)]
-
-            for _, row in recent.iterrows():
-                bond_name = str(row.get('债券简称', ''))
-                stock_code = str(row.get('标的股票', ''))
-                notice_date = str(row.get('公告日期', ''))[:10] \
-                    if pd.notna(row.get('公告日期')) else ''
-                conv_price = str(row.get('转股价格', ''))
-                if conv_price in ('nan', 'None', ''):
-                    conv_price = '待公告'
-
-                approved_list.append({
-                    'bond_name': bond_name,
-                    'stock_code': stock_code,
-                    'notice_date': notice_date,
-                    'status': '已发行',
-                    'conv_price': conv_price,
-                })
-
-        logger.info(f"近期已发行可转债: {len(approved_list)} 只")
-    except Exception as e:
-        logger.warning(f"获取已发行可转债失败: {e}")
-
     pipeline = _fetch_pipeline()
-    if pipeline:
-        source += " + 东方财富财富号"
-
+    source = "东方财富财富号"
+    # 不再返回已发行债券列表，用审批管线列表替代
+    approved_list = []  # 保留兼容，实际用 pipeline.lists
     return approved_list, pipeline, source
 
 
 def _fetch_pipeline() -> Optional[Dict]:
-    """审批管线统计（东方财富财富号，缓存，约每周更新）"""
+    """审批管线统计（东方财富财富号，约每周更新）"""
     return {
         'stats': {
             'approved_waiting': 18, 'passed_committee': 11,
             'upcoming_review': 6, 'inquiry_done': 6,
+        },
+        # 详细列表（从2026-05-30文章提取）
+        'lists': {
+            'approved_waiting': [
+                '南芯科技', '金帝股份', '豪能股份', '科博达',
+                '维科精密', '中汽股份', '四方科技', '圣泉集团',
+            ],
+            'passed_committee': [
+                '肇民科技', '奥普特',
+                '中科曙光(已提交注册)', '炬申股份(已提交注册)', '特宝生物(已提交注册)',
+            ],
+            'upcoming_review': [
+                '赛恩斯', '振华股份', '先锋精科',
+                '久吾高科', '中仑新材', '千红制药',
+            ],
+            'completed_dividend': [
+                '春风动力', '爱科科技', '金三江', '迪威尔',
+                '华翔股份', '科博达', '中汽股份',
+            ],
         },
         'source_url': 'https://caifuhao.eastmoney.com/news/20260530151213071344710',
         'source_name': '东方财富财富号 · 待发可转债统计表(截至2026-05-30)',
@@ -360,9 +351,7 @@ def generate_bond_content(
     bonds_today: List[Dict],
     bonds_future: List[Dict],
     future_source: str,
-    approved_list: List[Dict],
     pipeline: Dict,
-    approved_source: str,
 ) -> str:
     """
     生成新债邮件文本内容（复用 email_sender 的 format_email_html_responsive 模板）
@@ -442,43 +431,50 @@ def generate_bond_content(
         lines.append("")
 
     # ── 已获批可转债动态 ──
-    if approved_list or (pipeline and pipeline.get('stats')):
+    if pipeline and pipeline.get('stats'):
         lines.append("【已获批可转债动态】")
         lines.append("")
 
         # 管线概览
-        if pipeline and pipeline.get('stats'):
-            stats = pipeline.get('stats', {})
-            labels = {
-                'approved_waiting': '📌 已获核准/同意注册',
-                'passed_committee': '✅ 通过上市委审核',
-                'upcoming_review': '🔜 即将上会审核',
-                'inquiry_done': '📝 完成问询待上会',
-            }
-            stat_parts = []
-            for key, label in labels.items():
-                val = stats.get(key, 0)
-                if val > 0:
-                    stat_parts.append(f"{label}: {val}家")
-            lines.append(f"📊 审批管线: {' | '.join(stat_parts)}")
-            lines.append(f"   来源: {pipeline.get('source_name', '东方财富财富号')}")
-            lines.append("")
-
-        # 已发行表格
-        if approved_list:
-            lines.append(f"债券名称 | 正股 | 状态 | 公告日期 | 转股价")
-            lines.append(f"--- | --- | --- | --- | ---")
-            for b in approved_list[:12]:
-                lines.append(
-                    f"{b['bond_name']} | "
-                    f"{b.get('stock_code', '-')} | "
-                    f"{b.get('status', '已发行')} | "
-                    f"{b.get('notice_date', '-')} | "
-                    f"{b.get('conv_price', '-')}"
-                )
-            lines.append("")
-            lines.append(f"📊 近90天共 {len(approved_list)} 只 | 数据来源: {approved_source}")
+        stats = pipeline.get('stats', {})
+        labels = {
+            'approved_waiting': '📌 已获核准/同意注册',
+            'passed_committee': '✅ 通过上市委审核',
+            'upcoming_review': '🔜 即将上会审核',
+            'inquiry_done': '📝 完成问询待上会',
+        }
+        stat_parts = []
+        for key, label in labels.items():
+            val = stats.get(key, 0)
+            if val > 0:
+                stat_parts.append(f"{label}: {val}家")
+        lines.append(f"📊 审批管线: {' · '.join(stat_parts)}")
+        lines.append(f"   来源: {pipeline.get('source_name', '东方财富财富号')}")
         lines.append("")
+
+        # 详细列表
+        bond_lists = pipeline.get('lists', {})
+        if bond_lists:
+            # 已获核准批文（待发行）
+            approved = bond_lists.get('approved_waiting', [])
+            if approved:
+                lines.append(f"📌 已获核准/同意注册（等待发行）: {', '.join(approved)}等")
+                lines.append("")
+            # 通过上市委审核
+            passed = bond_lists.get('passed_committee', [])
+            if passed:
+                lines.append(f"✅ 通过上市委审核: {', '.join(passed)}")
+                lines.append("")
+            # 即将上会
+            upcoming = bond_lists.get('upcoming_review', [])
+            if upcoming:
+                lines.append(f"🔜 即将上会审核: {', '.join(upcoming)}")
+                lines.append("")
+            # 已完成分红可随时发行
+            dividend = bond_lists.get('completed_dividend', [])
+            if dividend:
+                lines.append(f"📋 已完成分红（可随时发行）: {', '.join(dividend)}")
+                lines.append("")
         lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         lines.append("")
 
@@ -503,9 +499,7 @@ def send_bond_email(
     bonds_today: List[Dict],
     bonds_future: List[Dict],
     future_source: str,
-    approved_list: List[Dict],
     pipeline: Dict,
-    approved_source: str,
     debug: bool = False,
 ) -> bool:
     """
@@ -530,8 +524,7 @@ def send_bond_email(
 
     # 生成文本内容
     text_content = generate_bond_content(
-        bonds_today, bonds_future, future_source,
-        approved_list, pipeline, approved_source
+        bonds_today, bonds_future, future_source, pipeline
     )
 
     # 复用电邮模板 → HTML
@@ -586,23 +579,21 @@ def main():
         bonds_today = MOCK_BONDS_TODAY
         bonds_future = MOCK_BONDS_FUTURE
         future_source = "模拟数据"
-        approved_list = MOCK_APPROVED
         pipeline = MOCK_PIPELINE
-        approved_source = "模拟数据"
     else:
         bonds_today = get_new_bonds_today()
         if not bonds_today:
             logger.info("今日无新债可申购，不发送邮件")
             return 0
         bonds_future, future_source = get_future_bonds()
-        approved_list, pipeline, approved_source = get_approved_bond_news()
+        _, pipeline, _ = get_approved_bond_news()
 
     # ── 发送 ──
-    logger.info(f"今日: {len(bonds_today)}只 | 未来: {len(bonds_future)}只 | 已获批: {len(approved_list)}条")
+    pipeline_bonds = len(pipeline.get('lists', {}).get('approved_waiting', [])) if pipeline else 0
+    logger.info(f"今日: {len(bonds_today)}只 | 未来: {len(bonds_future)}只 | 已获批待发: {pipeline_bonds}家")
 
     success = send_bond_email(
-        bonds_today, bonds_future, future_source,
-        approved_list, pipeline, approved_source,
+        bonds_today, bonds_future, future_source, pipeline,
         debug=args.debug or args.test
     )
 

@@ -69,13 +69,13 @@ def main():
         print("[新债] 今日有新债可申购，发送新债邮件")
         bonds_today = get_new_bonds_today()
         bonds_future, future_src = get_future_bonds()
-        approved, pipeline, appr_src = get_approved_bond_news()
+        _, pipeline, _ = get_approved_bond_news()
 
-        print(f"[新债] 今日:{len(bonds_today)}只 | 未来:{len(bonds_future)}只 | 已获批:{len(approved)}条")
+        pipeline_bonds = len(pipeline.get('lists', {}).get('approved_waiting', [])) if pipeline else 0
+        print(f"[新债] 今日:{len(bonds_today)}只 | 未来:{len(bonds_future)}只 | 已获批待发:{pipeline_bonds}家")
 
         success = send_bond_email(
-            bonds_today, bonds_future, future_src,
-            approved, pipeline, appr_src,
+            bonds_today, bonds_future, future_src, pipeline,
             debug=debug,
         )
         if success:

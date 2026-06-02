@@ -302,6 +302,7 @@ def format_email_html_responsive(content: str, title: str = "【Marcus策略小�
     lines = content.split('\n')
     html_lines = []
     in_list = False
+    in_table = False
     
     for line in lines:
         line = line.strip()
@@ -315,14 +316,25 @@ def format_email_html_responsive(content: str, title: str = "【Marcus策略小�
         for idx, tag in enumerate(_html_tags):
             line = line.replace(f'\x00HTMLTAG{idx}\x00', tag)
         if not line:
+            # 关闭未闭合的表格
+            if in_table:
+                html_lines.append('</tbody></table>')
+                in_table = False
             if in_list:
                 html_lines.append('</ul>')
                 in_list = False
             html_lines.append('<div style="height: 8px;"></div>')
             continue
         
-        # 处理分隔线
+        # 处理分隔线（跳过Markdown表格分隔行 --- | --- | ---）
+        if line.startswith('---') and '|' in line:
+            # Markdown 表格分隔行，跳过
+            continue
         if line.startswith('==') or line.startswith('━━') or line.startswith('---'):
+            # 关闭可能的未闭合表格
+            if in_table:
+                html_lines.append('</tbody></table>')
+                in_table = False
             if in_list:
                 html_lines.append('</ul>')
                 in_list = False
@@ -331,6 +343,10 @@ def format_email_html_responsive(content: str, title: str = "【Marcus策略小�
         
         # 处理主标题
         if line.startswith('【') and line.endswith('】'):
+            # 关闭可能的未闭合表格
+            if in_table:
+                html_lines.append('</tbody></table>')
+                in_table = False
             if in_list:
                 html_lines.append('</ul>')
                 in_list = False
@@ -407,6 +423,7 @@ def format_email_html_responsive(content: str, title: str = "【Marcus策略小�
                     for cell in cells:
                         html_lines.append(f'<th style="padding: 12px 10px; background: linear-gradient(135deg, #4F46E5 0%, #6366F1 100%); color: white; text-align: left; font-weight: 600; font-size: 13px;">{cell}</th>')
                     html_lines.append('</tr></thead><tbody>')
+                    in_table = True
                 else:
                     html_lines.append('<tr style="border-bottom: 1px solid #F1F5F9;">')
                     for i, cell in enumerate(cells):
@@ -425,8 +442,9 @@ def format_email_html_responsive(content: str, title: str = "【Marcus策略小�
                         html_lines.append(f'<td style="{cell_style}">{cell}</td>')
                     html_lines.append('</tr>')
             continue
-        elif '<tr>' in ''.join(html_lines[-5:]):
+        elif in_table:
             html_lines.append('</tbody></table>')
+            in_table = False
 
         # 处理普通文本
         if in_list:
@@ -451,7 +469,7 @@ def format_email_html_responsive(content: str, title: str = "【Marcus策略小�
     if in_list:
         html_lines.append('</ul>')
     
-    if '<tr>' in ''.join(html_lines[-5:]):
+    if in_table:
         html_lines.append('</tbody></table>')
     
     content_html = '\n'.join(html_lines)
