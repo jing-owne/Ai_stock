@@ -95,16 +95,44 @@ def has_bonds_today() -> bool:
 
 
 def get_new_bonds_today() -> List[Dict]:
-    """获取今日可申购新债 — 数据来源: 同花顺IPO日历(stock_ipo_ths)"""
-    try:
-        import akshare as ak
+    """获取今日可申购新债 — 数据来源: 同花顺 bond_zh_cov_info_ths → stock_ipo_ths 兜底"""
+    import akshare as ak
+    import pandas as pd
+    today = datetime.now().date()
+
+    def _try_ths():
+        """第1源: bond_zh_cov_info_ths（直接返回可转债，含转股价）"""
+        df = ak.bond_zh_cov_info_ths()
+        if df is None or df.empty or '申购日期' not in df.columns:
+            return []
+        bonds = []
+        for _, row in df.iterrows():
+            apply_date_str = str(row.get('申购日期', ''))
+            if not apply_date_str or apply_date_str in ('nan', 'NaT', '', 'None'):
+                continue
+            try:
+                parsed_date = pd.to_datetime(apply_date_str).date()
+            except Exception:
+                continue
+            if pd.isna(parsed_date) or parsed_date != today:
+                continue
+            bonds.append({
+                'bond_code': str(row.get('债券代码', '')),
+                'bond_name': str(row.get('债券简称', '')),
+                'apply_code': str(row.get('申购代码', '')),
+                'apply_date': today.strftime('%m-%d'),
+                'price': str(row.get('转股价格', '100.00')),
+                'rating': '待查',
+                'max_shares': '-',
+            })
+        return bonds
+
+    def _try_ipo():
+        """第2源: stock_ipo_ths（兜底，按名称过滤可转债）"""
         df = ak.stock_ipo_ths()
         if df is None or df.empty:
             return []
-
-        today = datetime.now().date()
         bonds = []
-
         for _, row in df.iterrows():
             apply_date_str = str(row.get('申购日期', ''))
             if not apply_date_str or apply_date_str in ('-', 'nan'):
@@ -112,36 +140,33 @@ def get_new_bonds_today() -> List[Dict]:
             try:
                 if '-' in apply_date_str and '周' in apply_date_str:
                     date_part = apply_date_str.split(' ')[0]
-                    parsed_date = datetime.strptime(
-                        f"{today.year}-{date_part}", "%Y-%m-%d").date()
+                    parsed_date = datetime.strptime(f"{today.year}-{date_part}", "%Y-%m-%d").date()
                 else:
-                    parsed_date = datetime.strptime(
-                        apply_date_str[:10], "%Y-%m-%d").date()
+                    parsed_date = datetime.strptime(apply_date_str[:10], "%Y-%m-%d").date()
             except (ValueError, IndexError):
                 continue
-
             if parsed_date != today:
                 continue
-
             stock_name = str(row.get('股票简称', ''))
-            is_bond = any(kw in stock_name for kw in
-                          ['转债', 'EB', '可转债', '可交债', '交换债'])
-            if not is_bond:
+            if not any(kw in stock_name for kw in ['转债', 'EB', '可转债', '可交债', '交换债']):
                 continue
-
             bonds.append({
                 'bond_code': str(row.get('股票代码', '')),
                 'bond_name': stock_name,
                 'apply_code': str(row.get('申购代码', '')),
                 'apply_date': today.strftime('%m-%d'),
                 'price': str(row.get('发行价格', '100.00')),
-                'rating': str(row.get('债券评级', '待查')),
-                'max_shares': str(row.get('申购上限（万股）', '-')),
+                'rating': '待查',
+                'max_shares': '-',
             })
-
-        logger.info(f"今日可申购新债: {len(bonds)} 只")
         return bonds
 
+    try:
+        bonds = _try_ths()
+        if not bonds:
+            bonds = _try_ipo()
+        logger.info(f"今日可申购新债: {len(bonds)} 只")
+        return bonds
     except ImportError:
         logger.warning("akshare 未安装")
         return []
@@ -151,47 +176,72 @@ def get_new_bonds_today() -> List[Dict]:
 
 
 def get_future_bonds() -> Tuple[List[Dict], str]:
-    """获取未来可申购可转债 — 数据来源: 东方财富 bond_cov_comparison"""
+    """获取未来可申购可转债 — 数据来源: 同花顺 bond_zh_cov_info_ths → bond_cov_comparison 兜底"""
+    import akshare as ak
     import pandas as pd
     today = datetime.now().date()
-    source = "东方财富 bond_cov_comparison"
+    source = "同花顺 bond_zh_cov_info_ths"
 
-    try:
-        import akshare as ak
-        for attempt in range(3):
+    def _try_ths():
+        df = ak.bond_zh_cov_info_ths()
+        if df is None or df.empty or '申购日期' not in df.columns:
+            return []
+        df['申购日期_dt'] = pd.to_datetime(df['申购日期'], errors='coerce')
+        future = df[df['申购日期_dt'] >= pd.Timestamp(today)]
+        bonds = []
+        for _, row in future.iterrows():
+            bonds.append({
+                'bond_name': str(row.get('债券简称', '')),
+                'bond_code': str(row.get('债券代码', '')),
+                'apply_date': str(row.get('申购日期', ''))[:10],
+                'stock_name': str(row.get('正股简称', '')),
+                'stock_code': str(row.get('正股代码', '')),
+                'price': str(row.get('转股价格', '-')),
+                'rating': '待查',
+            })
+        return bonds
+
+    def _try_cov():
+        for attempt in range(2):
             try:
                 if attempt > 0:
                     time.sleep(2)
                 df = ak.bond_cov_comparison()
-                break
+                if df is None or df.empty or '申购日期' not in df.columns:
+                    return []
+                valid = df[df['申购日期'].notna()].copy()
+                valid['申购日期_dt'] = pd.to_datetime(valid['申购日期'], format='%Y%m%d', errors='coerce')
+                future = valid[valid['申购日期_dt'] >= pd.Timestamp(today)]
+                bonds = []
+                for _, row in future.iterrows():
+                    bonds.append({
+                        'bond_name': str(row.get('转债名称', '')),
+                        'bond_code': str(row.get('转债代码', '')),
+                        'apply_date': str(row.get('申购日期', '')),
+                        'stock_name': str(row.get('正股名称', '')),
+                        'stock_code': str(row.get('正股代码', '')),
+                        'price': str(row.get('转股价', '-')),
+                        'rating': '待查',
+                    })
+                return bonds
             except Exception:
-                if attempt == 2:
-                    raise
                 continue
+        return []
 
-        if df is None or df.empty or '申购日期' not in df.columns:
-            return [], source
+    try:
+        bonds = _try_ths()
+        if bonds:
+            logger.info(f"未来可申购可转债: {len(bonds)} 只 (同花顺)")
+            return bonds, source
 
-        valid = df[df['申购日期'].notna()].copy()
-        valid['申购日期_dt'] = pd.to_datetime(
-            valid['申购日期'], format='%Y%m%d', errors='coerce')
-        future = valid[valid['申购日期_dt'] >= pd.Timestamp(today)]
+        bonds = _try_cov()
+        if bonds:
+            source = "东方财富 bond_cov_comparison"
+            logger.info(f"未来可申购可转债: {len(bonds)} 只 (东财)")
+            return bonds, source
 
-        bonds = []
-        for _, row in future.iterrows():
-            bonds.append({
-                'bond_name': str(row.get('转债名称', '')),
-                'bond_code': str(row.get('转债代码', '')),
-                'apply_date': str(row.get('申购日期', '')),
-                'stock_name': str(row.get('正股名称', '')),
-                'stock_code': str(row.get('正股代码', '')),
-                'price': str(row.get('转股价', '-')),
-                'rating': '待查',
-            })
-
-        logger.info(f"未来可申购可转债: {len(bonds)} 只")
-        return bonds, source
-
+        logger.info("未来可申购可转债: 0 只")
+        return [], source
     except ImportError:
         return [], source
     except Exception as e:
