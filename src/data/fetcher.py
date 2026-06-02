@@ -332,6 +332,194 @@ class DataFetcher:
             self.logger.error(f"获取打新日历失败: {e}")
             return []
 
+    def _enrich_bond_ratings(self, bond_list: List[Dict]) -> None:
+        """
+        用 bond_zh_cov_info 逐只补充可转债的评级和申购上限
+        """
+        import akshare as ak
+        import pandas as pd
+        for bond in bond_list:
+            bond_code = bond.get('bond_code', '')
+            if not bond_code:
+                bond['rating'] = '待查'
+                bond['max_shares'] = '1000手(10000张)'
+                continue
+            try:
+                df = ak.bond_zh_cov_info(symbol=bond_code)
+                if df is not None and not df.empty:
+                    rating = str(df.iloc[0].get('RATING', ''))
+                    online_aau = df.iloc[0].get('ONLINE_GENERAL_AAU', None)
+                    bond['rating'] = rating if rating and rating not in ('nan', 'None', '') else '待查'
+                    if online_aau and not pd.isna(online_aau):
+                        lots = int(online_aau)
+                        bond['max_shares'] = f'{lots}手({lots*10}张)'
+                    else:
+                        bond['max_shares'] = '1000手(10000张)'
+                else:
+                    bond['rating'] = '待查'
+                    bond['max_shares'] = '1000手(10000张)'
+            except Exception as e:
+                self.logger.debug(f"获取{bond_code}评级失败: {e}")
+                bond['rating'] = '待查'
+                bond['max_shares'] = '1000手(10000张)'
+
+    def get_bond_calendar(self, max_days: int = 7) -> List[Dict]:
+        """
+        获取近期可转债申购日历
+
+        数据源优先级:
+        1. bond_zh_cov_info_ths（同花顺可转债信息，最可靠，含申购日期/转股价）
+        2. bond_cov_comparison（东方财富，作为备选）
+        3. stock_ipo_ths（同花顺IPO日历，可转债兜底）
+
+        评级和申购上限通过 bond_zh_cov_info(symbol=code) 逐只补充
+
+        Args:
+            max_days: 最多显示未来几天的可申购可转债
+
+        Returns:
+            可转债申购列表
+        """
+        import akshare as ak
+        import pandas as pd
+        from datetime import datetime, timedelta
+        import time
+
+        today = datetime.now().date()
+        cutoff = today + timedelta(days=max_days)
+
+        # ── 第1源: bond_zh_cov_info_ths（最可靠） ──
+        try:
+            df = ak.bond_zh_cov_info_ths()
+            if df is not None and not df.empty and '申购日期' in df.columns:
+                bond_list = []
+                for _, row in df.iterrows():
+                    apply_date_str = str(row.get('申购日期', ''))
+                    if not apply_date_str or apply_date_str in ('nan', 'NaT', '', 'None'):
+                        continue
+                    try:
+                        parsed_date = pd.to_datetime(apply_date_str).date()
+                    except Exception:
+                        continue
+                    if pd.isna(parsed_date) or parsed_date < today or parsed_date > cutoff:
+                        continue
+
+                    bond_name = str(row.get('债券简称', ''))
+                    bond_code = str(row.get('债券代码', ''))
+                    stock_name = str(row.get('正股简称', ''))
+                    conv_price = str(row.get('转股价格', '-'))
+                    apply_code = str(row.get('申购代码', ''))
+                    lottery_date = str(row.get('中签公布日', ''))
+                    amount = str(row.get('计划发行量', '-'))
+
+                    bond_list.append({
+                        'bond_name': bond_name,
+                        'bond_code': bond_code,
+                        'stock_name': stock_name,
+                        'apply_date': parsed_date.strftime('%m-%d'),
+                        'apply_date_full': parsed_date.strftime('%Y-%m-%d'),
+                        'apply_code': apply_code if apply_code not in ('nan', '') else '-',
+                        'conv_price': conv_price if conv_price not in ('nan', '-', '') else '待定',
+                        'amount': f'{float(amount):.2f}亿' if amount.replace('.', '').isdigit() else amount,
+                        'lottery_date': lottery_date if lottery_date not in ('nan', 'NaT', '') else '-',
+                        'rating': '',
+                        'max_shares': '',
+                        'source': '同花顺',
+                    })
+
+                if bond_list:
+                    self._enrich_bond_ratings(bond_list)
+                    self.logger.info(f"获取可转债日历(同花顺): 未来{max_days}天共{len(bond_list)}只")
+                    return bond_list
+        except Exception as e:
+            self.logger.debug(f"bond_zh_cov_info_ths 失败: {e}")
+
+        # ── 第2源: bond_cov_comparison（重试） ──
+        for attempt in range(2):
+            try:
+                time.sleep(1)
+                df = ak.bond_cov_comparison()
+                if df is not None and not df.empty and '申购日期' in df.columns:
+                    bond_list = []
+                    for _, row in df.iterrows():
+                        apply_date_str = str(row.get('申购日期', ''))
+                        if not apply_date_str or apply_date_str in ('nan', 'NaT', ''):
+                            continue
+                        try:
+                            parsed_date = pd.to_datetime(apply_date_str, format='%Y%m%d', errors='coerce').date()
+                        except Exception:
+                            continue
+                        if pd.isna(parsed_date) or parsed_date < today or parsed_date > cutoff:
+                            continue
+
+                        bond_name = str(row.get('转债名称', ''))
+                        bond_code = str(row.get('转债代码', ''))
+                        stock_name = str(row.get('正股名称', ''))
+                        conv_price = str(row.get('转股价', '-'))
+                        rating = str(row.get('评级', '-'))
+
+                        bond_list.append({
+                            'bond_name': bond_name,
+                            'bond_code': bond_code,
+                            'stock_name': stock_name,
+                            'apply_date': parsed_date.strftime('%m-%d'),
+                            'apply_date_full': parsed_date.strftime('%Y-%m-%d'),
+                            'conv_price': conv_price if conv_price not in ('nan', '-', '') else '待定',
+                            'rating': rating if rating not in ('nan', '-', '') else '待查',
+                            'source': '东方财富',
+                        })
+
+                    if bond_list:
+                        self.logger.info(f"获取可转债日历(东财): 未来{max_days}天共{len(bond_list)}只")
+                        return bond_list
+                break
+            except Exception as e:
+                self.logger.debug(f"bond_cov_comparison 第{attempt+1}次失败: {e}")
+
+        # ── 第3源: stock_ipo_ths 兜底 ──
+        try:
+            df3 = ak.stock_ipo_ths()
+            if df3 is not None and not df3.empty:
+                from datetime import datetime as dt
+                bond_list = []
+                for _, row in df3.iterrows():
+                    apply_date_str = str(row.get('申购日期', ''))
+                    if not apply_date_str or apply_date_str in ('-', 'nan', ''):
+                        continue
+                    name = str(row.get('股票简称', ''))
+                    if '转债' not in name and 'EB' not in name:
+                        continue
+                    try:
+                        if '-' in apply_date_str and '周' in apply_date_str:
+                            date_part = apply_date_str.split(' ')[0]
+                            parsed_date = dt.strptime(f'{today.year}-{date_part}', '%Y-%m-%d').date()
+                        else:
+                            parsed_date = dt.strptime(apply_date_str[:10], '%Y-%m-%d').date()
+                    except (ValueError, IndexError):
+                        continue
+                    if parsed_date < today or parsed_date > cutoff:
+                        continue
+
+                    bond_list.append({
+                        'bond_name': name,
+                        'bond_code': str(row.get('股票代码', '')),
+                        'stock_name': name.replace('转债', '').replace('EB', ''),
+                        'apply_date': parsed_date.strftime('%m-%d'),
+                        'apply_date_full': parsed_date.strftime('%Y-%m-%d'),
+                        'conv_price': str(row.get('发行价格', '待定')),
+                        'rating': '待查',
+                        'source': '同花顺IPO',
+                    })
+
+                if bond_list:
+                    self.logger.info(f"获取可转债日历(IPO兜底): 未来{max_days}天共{len(bond_list)}只")
+                    return bond_list
+        except Exception as e:
+            self.logger.debug(f"stock_ipo_ths 可转债解析失败: {e}")
+
+        self.logger.info(f"获取可转债日历: 未来{max_days}天共0只可转债可申购")
+        return []
+
     def get_market_overview(self) -> Dict[str, Any]:
         """
         获取市场态势总览数据（沪深300、上证指数、成交量等）

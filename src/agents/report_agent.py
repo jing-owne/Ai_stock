@@ -329,14 +329,27 @@ class ReportAgent:
         lines.append("• 必须设置止损位（建议-5%），严格执行")
         lines.append("")
 
-        # 打新日历
+        # ── 打新日历（新股） ──
         ipo_list = fetcher.get_ipo_calendar(max_days=7)
         if ipo_list:
-            lines.append(f"📋 近期打新日历（未来7天）：")
+            lines.append(f"📋 近期新股申购（未来7天）：")
             for ipo in ipo_list:
-                lines.append(f"  • {ipo['apply_date']}  {ipo['stock_name']}（{ipo['stock_code']}）申购代码：{ipo['apply_code']} | 发行价：{ipo['price']} | 顶格市值：{ipo['market_cap_needed']}万")
+                lines.append(f"  • {ipo['apply_date']}  {ipo['stock_name']}（{ipo['stock_code']}）申购代码：{ipo['apply_code']} | 发行价：{ipo['price']}")
         else:
             lines.append("📋 近7天暂无新股申购安排")
+        lines.append("")
+
+        # ── 可转债日历 ──
+        bond_list = fetcher.get_bond_calendar(max_days=7)
+        if bond_list:
+            lines.append(f"📋 近期可转债申购（未来7天）：")
+            for bond in bond_list:
+                conv_price = bond.get('conv_price', '待定')
+                amount = bond.get('amount', '')
+                amount_str = f' | 规模：{amount}' if amount and amount not in ('nan', '-', '') else ''
+                lines.append(f"  • {bond['apply_date']}  {bond['bond_name']}（{bond['bond_code']}）正股：{bond['stock_name']} | 转股价：¥{conv_price}{amount_str}")
+        else:
+            lines.append("📋 近7天暂无新债申购安排")
 
         return '\n'.join(lines)
     

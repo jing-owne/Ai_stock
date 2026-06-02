@@ -130,6 +130,7 @@ class EmailConfig:
 class BondEmailConfig:
     """新债打新提醒邮件配置（独立于策略邮件池）"""
     enabled: bool = True
+    debug_mode: bool = False       # 调试模式（只发邮件不抄送）
     sender_name: str = "Marcus策略师"
     smtp_server: str = "smtp.qq.com"
     smtp_port: int = 465
