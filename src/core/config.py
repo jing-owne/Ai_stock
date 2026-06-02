@@ -127,12 +127,26 @@ class EmailConfig:
 
 
 @dataclass
+class BondEmailConfig:
+    """新债打新提醒邮件配置（独立于策略邮件池）"""
+    enabled: bool = True
+    sender_name: str = "Marcus策略师"
+    smtp_server: str = "smtp.qq.com"
+    smtp_port: int = 465
+    smtp_user: str = ""
+    smtp_password: str = ""
+    to_emails: list = field(default_factory=list)
+    cc_emails: list = field(default_factory=list)
+
+
+@dataclass
 class Config:
     """统一配置类"""
     data_source: DataSourceConfig = field(default_factory=DataSourceConfig)
     strategy: StrategyConfig = field(default_factory=StrategyConfig)
     report: ReportConfig = field(default_factory=ReportConfig)
     email: EmailConfig = field(default_factory=EmailConfig)
+    bond_email: BondEmailConfig = field(default_factory=BondEmailConfig)
     
     # 全局设置
     log_level: str = "INFO"          # 日志级别
@@ -175,6 +189,11 @@ class Config:
             for key, value in data["email"].items():
                 if hasattr(config.email, key):
                     setattr(config.email, key, value)
+        
+        if "bond_email" in data:
+            for key, value in data["bond_email"].items():
+                if hasattr(config.bond_email, key):
+                    setattr(config.bond_email, key, value)
         
         # 全局设置
         if "log_level" in data:
