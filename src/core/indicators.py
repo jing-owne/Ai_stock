@@ -139,6 +139,10 @@ def calc_all_indicators(
         result["sma10"] = float(np.mean(close[-10:]))
     if n >= 20:
         result["sma20"] = float(np.mean(close[-20:]))
+    if n >= 60:
+        result["sma60"] = float(np.mean(close[-60:]))
+    if n >= 120:
+        result["sma120"] = float(np.mean(close[-120:]))
 
     # 5日均量
     if n >= 6:
@@ -261,6 +265,30 @@ def calc_all_indicators(
     if not np.isnan(rsi_arr[-1]):
         result["rsi14"] = float(rsi_arr[-1])
 
+    # ── v2.6.5新增：突破前高检测 ──
+    if n >= 20:
+        close_20 = close[-21:-1]  # 前20日（不含今天）
+        if len(close_20) > 0:
+            high_20d = float(np.max(close_20))
+            result["breakout_20d_high"] = bool(close[-1] > high_20d)
+            result["dist_to_20d_high"] = float((close[-1] - high_20d) / high_20d * 100)
+    if n >= 60:
+        close_60 = close[-61:-1]  # 前60日（不含今天）
+        if len(close_60) > 0:
+            high_60d = float(np.max(close_60))
+            result["breakout_60d_high"] = bool(close[-1] > high_60d)
+            result["dist_to_60d_high"] = float((close[-1] - high_60d) / high_60d * 100)
+
+    # ── v2.6.5新增：累计涨幅（近N日）──
+    if n >= 5:
+        price_5d_ago = float(close[-6]) if n >= 6 else float(close[0])
+        if price_5d_ago > 0:
+            result["cumulative_change_5d"] = float((close[-1] - price_5d_ago) / price_5d_ago * 100)
+    if n >= 10:
+        price_10d_ago = float(close[-11]) if n >= 11 else float(close[0])
+        if price_10d_ago > 0:
+            result["cumulative_change_10d"] = float((close[-1] - price_10d_ago) / price_10d_ago * 100)
+
     # MACD
     if n >= 35:  # MACD(12,26,9) 至少需要 35 根 K 线
         macd_data = calc_macd(close)
@@ -298,6 +326,53 @@ def calc_all_indicators(
         close_last = float(close[-1])
         result["above_sma5"] = close_last > result["sma5"]
         result["above_sma20"] = close_last > result["sma20"]
+
+    # ── v2.6.5新增：距均线距离（用于均线支撑检测）──
+    if "sma10" in result:
+        result["dist_to_ma10"] = abs(close_last - result["sma10"]) / result["sma10"] * 100
+    if "sma20" in result:
+        result["dist_to_ma20"] = abs(close_last - result["sma20"]) / result["sma20"] * 100
+
+    # ── v2.6.5新增：前N日涨跌幅（用于回调确认检测）──
+    if n >= 3:
+        result["daily_change_1d_ago"] = float((close[-2] - close[-3]) / close[-3] * 100) if close[-3] != 0 else 0
+    if n >= 4:
+        result["daily_change_2d_ago"] = float((close[-3] - close[-4]) / close[-4] * 100) if close[-4] != 0 else 0
+    if n >= 5:
+        result["daily_change_3d_ago"] = float((close[-4] - close[-5]) / close[-5] * 100) if close[-5] != 0 else 0
+
+    # ── v2.6.5新增：回调确认检测 ──
+    # 条件：前1-3日(昨日起)连续小幅回调(-1%~-5%) → 今日企稳(涨跌幅>=-0.5%)
+    if n >= 5:
+        today_change_pct = float((close[-1] - close[-2]) / close[-2] * 100) if close[-2] != 0 else 0
+        is_stable = today_change_pct >= -0.5
+
+        # 统计前N日连续小幅回调天数
+        pullback_count = 0
+        for offset in range(1, 4):  # 前1-3日
+            if n > offset + 1:
+                prev_change = float((close[-(offset+1)] - close[-(offset+2)]) / close[-(offset+2)] * 100) if close[-(offset+2)] != 0 else 0
+                if -5 <= prev_change <= -1:
+                    pullback_count += 1
+                else:
+                    break  # 非连续回调即停止
+        result["pullback_confirm"] = pullback_count >= 1 and is_stable
+    else:
+        result["pullback_confirm"] = False
+
+    # ── v2.6.5新增：持续上涨检测 (close > MA20 > MA60 > MA120) ──
+    close_last = float(close[-1])
+    if "sma20" in result and "sma60" in result and "sma120" in result:
+        result["sustained_uptrend"] = (
+            close_last > result["sma20"] > result["sma60"] > result["sma120"]
+        )
+
+    # ── v2.6.5新增：MA5拐头向上检测（近3天SMA5斜率转正）──
+    if n >= 8:
+        # 计算近几日的SMA5值
+        sma5_now = float(np.mean(close[-5:]))
+        sma5_3d_ago = float(np.mean(close[-8:-3]))
+        result["ma5_turning_up"] = sma5_now > sma5_3d_ago
 
     return result
 
@@ -445,7 +520,7 @@ def calc_anti_trap_penalty(
     防套惩罚分 (负值，0表示无风险)
     检测导致"今天买明天套"的典型陷阱模式。
 
-    v2.1 优化: 区分高位陷阱 vs 低位启动
+    v2.6.5 优化: 区分高位陷阱 vs 低位启动
     - 低位(<40%)的连涨视为底部启动，减轻惩罚
     - 高位(>70%)的连涨视为追高风险，加重惩罚
 
@@ -675,3 +750,146 @@ def calc_ma_divergence_score(indicators: Dict[str, float]) -> float:
         score += 5
 
     return max(0.0, min(score, 100.0))
+
+
+def calc_pullback_confirm_score(indicators: Dict[str, float]) -> float:
+    """
+    回调确认加分 (0 ~ +5)
+
+    条件：前1-3日小幅回调(-1%~-5%) + 今日企稳(涨幅>= -0.5%)
+    → 视为健康回调后的买入确认信号
+
+    返回：5 或 0（二值）
+    """
+    if indicators.get("pullback_confirm"):
+        return 5.0
+    return 0.0
+
+
+def calc_ma_support_score(indicators: Dict[str, float]) -> float:
+    """
+    均线支撑加分 (0 ~ +5)
+
+    条件：当前价距MA10或MA20 < 3%
+    → 均线附近是安全买点，有技术支撑
+
+    返回：5 或 0（二值）
+    """
+    dist10 = indicators.get("dist_to_ma10", 999)
+    dist20 = indicators.get("dist_to_ma20", 999)
+    if dist10 < 3.0 or dist20 < 3.0:
+        return 5.0
+    return 0.0
+
+
+# ─────────────────────────────────────────────
+# v2.6.5 新增：周期数据重采样 & 多周期指标
+# ─────────────────────────────────────────────
+
+def resample_to_weekly(daily_close: np.ndarray) -> np.ndarray:
+    """日线→周线重采样（取每周收盘价）"""
+    if len(daily_close) < 5:
+        return np.array([])
+    weekly = []
+    for i in range(4, len(daily_close), 5):
+        weekly.append(float(daily_close[i]))
+    # 最后不足5天的也取最后一天
+    if len(daily_close) % 5 > 0 and len(daily_close) > 5:
+        weekly.append(float(daily_close[-1]))
+    return np.array(weekly)
+
+
+def resample_to_monthly(daily_close: np.ndarray) -> np.ndarray:
+    """日线→月线重采样（每22个交易日取收盘价）"""
+    if len(daily_close) < 22:
+        return np.array([])
+    monthly = []
+    for i in range(21, len(daily_close), 22):
+        monthly.append(float(daily_close[i]))
+    if len(daily_close) % 22 > 0 and len(daily_close) > 22:
+        monthly.append(float(daily_close[-1]))
+    return np.array(monthly)
+
+
+def calc_net_inflow_score(consecutive_inflow_days: int) -> float:
+    """
+    净流入评分 (0 ~ +10)
+
+    20个交易日内连续主力净流入天数：
+    >10天: +3分
+    >13天: +5分
+    >15天: +8分
+    >18天: +10分
+
+    返回：0/3/5/8/10
+    """
+    if consecutive_inflow_days >= 18:
+        return 10.0
+    elif consecutive_inflow_days >= 15:
+        return 8.0
+    elif consecutive_inflow_days >= 13:
+        return 5.0
+    elif consecutive_inflow_days >= 10:
+        return 3.0
+    return 0.0
+
+
+def calc_sustained_uptrend_score(indicators: Dict[str, float]) -> float:
+    """
+    持续上涨评分 (0 ~ +10)
+
+    条件：当日价 > MA20 > MA60 > MA120
+    → 中长期均线多头排列，趋势健康
+
+    返回：10 或 0（二值）
+    """
+    if indicators.get("sustained_uptrend"):
+        return 10.0
+    return 0.0
+
+
+def calc_bottom_rebound_score(
+    daily_close: np.ndarray,
+    daily_volume: np.ndarray,
+) -> float:
+    """
+    触底反弹评分 (0 ~ +8)
+
+    三条件需全部满足：
+    1. 日线MA5拐头向上（近3日SMA5斜率转正）
+    2. 周线均线多头排列（SMA5_weekly > SMA10_weekly > SMA20_weekly）
+    3. 月线MACD > 0.618（MACD柱值为正且足够大）
+
+    返回：8 或 0（二值）
+    """
+    n = len(daily_close)
+    if n < 132:  # 需要至少132天（约6个月）的日线数据
+        return 0.0
+
+    # 条件1: 日线MA5拐头向上
+    sma5_now = float(np.mean(daily_close[-5:]))
+    sma5_3d_ago = float(np.mean(daily_close[-8:-3]))
+    if sma5_now <= sma5_3d_ago:
+        return 0.0
+
+    # 条件2: 周线均线多头排列
+    weekly_close = resample_to_weekly(daily_close)
+    if len(weekly_close) < 20:
+        return 0.0
+    sma5_w = float(np.mean(weekly_close[-5:]))
+    sma10_w = float(np.mean(weekly_close[-10:]))
+    sma20_w = float(np.mean(weekly_close[-20:]))
+    if not (sma5_w > sma10_w > sma20_w):
+        return 0.0
+
+    # 条件3: 月线MACD > 0.618
+    monthly_close = resample_to_monthly(daily_close)
+    if len(monthly_close) < 35:
+        return 0.0
+    macd_data = calc_macd(monthly_close)
+    macd_hist_last = macd_data["macd"][-1]
+    # MACD柱值为nan或<=0.618则失败
+    if np.isnan(macd_hist_last) or macd_hist_last <= 0.618:
+        return 0.0
+
+    return 8.0

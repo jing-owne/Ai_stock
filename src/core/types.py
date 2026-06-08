@@ -8,22 +8,37 @@ from enum import Enum
 
 
 class StrategyType(Enum):
-    """策略类型枚举"""
-    VOLUME_SURGE = "volume_surge"           # 放量上涨策略
-    TURNOVER_RANK = "turnover_rank"         # 成交额排名策略
-    MULTI_FACTOR = "multi_factor"           # 多因子策略
-    AI_TECHNICAL = "ai_technical"           # AI技术面策略
-    INSTITUTION = "institution"             # 机构追踪策略
-    BOX_BREAKOUT = "box_breakout"           # 箱体突破策略
-    MA_DIVERGENCE = "ma_divergence"         # 均线多头发散策略
-    COMPOSITE = "composite"                 # 综合策略（整合7大策略）
+    """策略类型枚举 (v2.6.5 — 9大独立策略)"""
+    # 动量类
+    VOLUME_BREAKOUT = "volume_breakout"       # 放量突破 = volume_surge + new_high_break
+    TURNOVER_RANK = "turnover_rank"           # 成交额排名
+    CONSECUTIVE_POSITIVE = "consecutive_positive"  # 连续小阳吸筹
+    NET_INFLOW = "net_inflow"                 # 资金净流入
+
+    # 技术类
+    MULTI_FACTOR = "multi_factor"             # 多因子增强 = multi_factor + institution
+    AI_TECHNICAL = "ai_technical"             # AI技术面
+    BOX_BREAKOUT = "box_breakout"             # 箱体突破
+    MA_TREND = "ma_trend"                     # 均线趋势 = ma_divergence + sustained_uptrend
+    BOTTOM_REBOUND = "bottom_rebound"         # 底部反弹 = rsi_oversold + bottom_rebound
+
+    # 综合
+    COMPOSITE = "composite"                   # 综合策略（整合9大策略）
+
+    # ── 向后兼容（标记为已合并）──
+    VOLUME_SURGE = "volume_surge"             # → VOLUME_BREAKOUT
+    INSTITUTION = "institution"               # → MULTI_FACTOR
+    MA_DIVERGENCE = "ma_divergence"           # → MA_TREND
+    RSI_OVERSOLD = "rsi_oversold"             # → BOTTOM_REBOUND
+    NEW_HIGH_BREAK = "new_high_break"         # → VOLUME_BREAKOUT
+    SUSTAINED_UPTREND = "sustained_uptrend"   # → MA_TREND
 
 
 @dataclass
 class StockData:
-    """股票数据模型"""
-    symbol: str                    # 股票代码
-    name: str                      # 股票名称
+    """标的数据模型"""
+    symbol: str                    # 代码
+    name: str                      # 名称
     date: str                      # 日期 (YYYY-MM-DD)
     open: float                    # 开盘价
     high: float                    # 最高价
@@ -45,8 +60,8 @@ class StockData:
 @dataclass
 class ScanResult:
     """扫描结果"""
-    symbol: str                    # 股票代码
-    name: str                      # 股票名称
+    symbol: str                    # 代码
+    name: str                      # 名称
     strategy: StrategyType         # 策略类型
     score: float                   # 综合评分 (0-100)
     signals: List[str]             # 交易信号列表

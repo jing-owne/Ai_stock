@@ -41,7 +41,7 @@ class BaseStrategy(ABC):
             params: 策略参数
             
         Returns:
-            符合条件的股票列表
+            符合条件的标的列表
         """
         pass
     
@@ -51,10 +51,10 @@ class BaseStrategy(ABC):
         factors: Dict[str, float]
     ) -> float:
         """
-        计算股票评分
+        计算标的评分
         
         Args:
-            stock: 股票数据
+            stock: 标的数据
             factors: 各因子评分
             
         Returns:

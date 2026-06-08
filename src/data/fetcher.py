@@ -26,7 +26,7 @@ class DataFetcher:
             每日一言文本
         """
         try:
-            url = "https://v1.hitokoto.cn/?encode=json"
+            url = "https://v2.6.5hitokoto.cn/?encode=json"
             response = requests.get(url, timeout=10)
             response.raise_for_status()
             
@@ -146,7 +146,7 @@ class DataFetcher:
     
     def _filter_finance_news(self, news_list: List[Dict], source: str = 'yicai') -> List[Dict]:
         """
-        过滤财经新闻，保留股票、财经、公司相关，过滤无关内容
+        过滤财经新闻，保留标的、财经、公司相关，过滤无关内容
         
         Args:
             news_list: 原始新闻列表
@@ -155,9 +155,9 @@ class DataFetcher:
         Returns:
             过滤后的新闻列表
         """
-        # 需要保留的关键词（股票、财经、公司、产业相关）
+        # 需要保留的关键词（标的、财经、公司、产业相关）
         keep_keywords = [
-            '股票', '股市', 'A股', '港股', '美股', '创业板', '科创板',
+            '标的', '股市', 'A股', '港股', '美股', '创业板', '科创板',
             '财经', '金融', '银行', '保险', '证券', '基金', '债券',
             '公司', '集团', '股份', '有限', '上市', 'IPO', '融资', '中标',
             '涨停', '跌停', '拉升', '下跌', '上涨', '指数', '沪深',
@@ -301,8 +301,8 @@ class DataFetcher:
                 if parsed_date < today or parsed_date > cutoff:
                     continue
 
-                stock_code = str(row.get('股票代码', ''))
-                stock_name = str(row.get('股票简称', ''))
+                stock_code = str(row.get('代码', ''))
+                stock_name = str(row.get('标的简称', ''))
                 apply_code = str(row.get('申购代码', ''))
                 price = str(row.get('发行价格', '-'))
                 pe = str(row.get('发行市盈率', '-'))
@@ -486,7 +486,7 @@ class DataFetcher:
                     apply_date_str = str(row.get('申购日期', ''))
                     if not apply_date_str or apply_date_str in ('-', 'nan', ''):
                         continue
-                    name = str(row.get('股票简称', ''))
+                    name = str(row.get('标的简称', ''))
                     if '转债' not in name and 'EB' not in name:
                         continue
                     try:
@@ -502,7 +502,7 @@ class DataFetcher:
 
                     bond_list.append({
                         'bond_name': name,
-                        'bond_code': str(row.get('股票代码', '')),
+                        'bond_code': str(row.get('代码', '')),
                         'stock_name': name.replace('转债', '').replace('EB', ''),
                         'apply_date': parsed_date.strftime('%m-%d'),
                         'apply_date_full': parsed_date.strftime('%Y-%m-%d'),

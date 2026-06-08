@@ -1,5 +1,5 @@
 """
-AInvest核心引擎
+Marcus策略小助手核心引擎
 协调所有Agent和策略
 """
 import logging
@@ -16,7 +16,7 @@ from ..agents.report_agent import ReportAgent
 
 class AInvestEngine:
     """
-    AInvest量化分析引擎
+    Marcus策略小助手量化分析引擎
     
     协调数据采集、策略执行、市场分析和报告生成
     """
@@ -62,7 +62,7 @@ class AInvestEngine:
         **kwargs
     ) -> List[ScanResult]:
         """
-        执行股票扫描
+        执行标的扫描
         
         Args:
             strategy: 策略类型
@@ -76,7 +76,7 @@ class AInvestEngine:
         
         # 1. 数据采集
         market_data = self.data_agent.fetch_market_data()
-        self.logger.info(f"获取市场数据: {len(market_data)}只股票")
+        self.logger.info(f"获取市场数据: {len(market_data)}只标的")
         
         # 2. 策略执行（综合策略额外获取市场状态和权重）
         from ..core.types import StrategyType
@@ -95,14 +95,20 @@ class AInvestEngine:
                 # 直接使用缓存的子策略结果，不重新执行
                 sub_raw = getattr(comp_strategy, '_last_sub_results', {}) or {}
                 # 整理每个子策略 Top 10
+                # ── v2.6.5: 9大策略，每策略取 Top 15 ──
                 sub_top10: Dict[str, List] = {}
-                for sname in ["volume_surge", "turnover_rank", "multi_factor", "ai_technical", "institution", "box_breakout", "ma_divergence"]:
+                target_strategies = [
+                    "volume_breakout", "turnover_rank", "multi_factor",
+                    "ai_technical", "box_breakout", "ma_trend",
+                    "bottom_rebound", "consecutive_positive", "net_inflow"
+                ]
+                for sname in target_strategies:
                     items = []
                     for sym, strat_map in sub_raw.items():
                         if sname in strat_map:
                             items.append(strat_map[sname])
                     items.sort(key=lambda x: x.score, reverse=True)
-                    sub_top10[sname] = items[:10]
+                    sub_top10[sname] = items[:15]
                 context["sub_top10"] = sub_top10
                 context["market_state"] = mstate
                 context["weights"] = weights
@@ -111,7 +117,7 @@ class AInvestEngine:
             results = self.strategy_agent.execute(strategy, market_data, **kwargs)
             self._last_strategy_context = {}
         
-        self.logger.info(f"策略执行完成: {len(results)}个候选股票")
+        self.logger.info(f"策略执行完成: {len(results)}个候选标的")
         
         # 3. 排序和筛选
         results.sort(key=lambda x: x.score, reverse=True)

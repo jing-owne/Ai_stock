@@ -57,7 +57,7 @@ class EmailSender:
         生成完整的邮件内容
         
         Args:
-            stock_results: 股票选择结果列表
+            stock_results: 标的池结果列表
             strategy_config: 策略配置信息
             
         Returns:
@@ -205,7 +205,7 @@ class EmailSender:
 
             content_lines.append(f"▶ 平均评分: {avg_score:.1f}")
             content_lines.append(f"▶ 上涨家数: {up_count} 只")
-            content_lines.append(f"▶ 建议重点关注前3只股票")
+            content_lines.append(f"▶ 建议重点关注前3只标的")
 
         content_lines.append("")
         content_lines.append("=" * 50)
@@ -279,14 +279,14 @@ class EmailSender:
         strategy_config: Dict = None
     ) -> bool:
         """
-        发送选股报告
+        发送策略报告
         
         Args:
             results_summary: 结果摘要（纯文本）
             html_content: HTML报告内容
             strategy_name: 策略名称
             attachments: 附件路径列表
-            stock_results: 股票选择结果列表
+            stock_results: 标的池结果列表
             strategy_config: 策略配置信息
             
         Returns:

@@ -1,55 +1,77 @@
 """
-综合策略 (Composite Strategy)
-整合5大选股策略，按照动态权重分配综合评分
+综合策略 (Composite Strategy) v2.6.5
 
-策略权重（根据市场状态自动调整）：
-- 上涨趋势 (trend_up):   放量25% 成交额25% 多因子30% AI技术20% 机构0%
-- 下跌趋势 (trend_down): 放量15% 成交额25% 多因子30% AI技术20% 机构10%
-- 震荡市 (volatile):     放量25% 成交额20% 多因子25% AI技术20% 机构10%
+整合9大独立量化策略，按动态权重分配综合评分。
+所有策略均为独立模块，支持单独增删和测试。
 
-基本面筛选（可选，基于行情数据）：
-- 排除 ST / * 股（数据层已过滤）
-- 排除停牌股（成交量=0，数据层已过滤）
-- 可选：PE/PB筛选（需配置第三方数据源）
+架构:
+- composite_strategy.py: 编排层（K线预取、指标共享、权重计算、综合评分）
+- strategies/momentum/*.py: 动量类策略
+- strategies/technical/*.py: 技术类策略
+
+策略权重（根据市场状态自动调整，总和=1.0）：
+- 上涨趋势 (trend_up):   动量策略加码
+- 下跌趋势 (trend_down): 防守策略加码
+- 震荡市 (volatile):     技术面均衡
 """
-
 from typing import List, Dict, Any, Optional
 import logging
 
 from .base import BaseStrategy
 from ..core.types import StockData, ScanResult, StrategyType
-from ..core.indicators import calc_all_indicators, calc_technical_score, calc_pattern_score, calc_trend_score, calc_position_score, calc_anti_trap_penalty, calc_low_absorb_score, calc_box_breakout_score, calc_ma_divergence_score
+from ..core.indicators import (
+    calc_all_indicators, calc_position_score, calc_anti_trap_penalty,
+    calc_low_absorb_score, calc_pullback_confirm_score, calc_ma_support_score
+)
 from ..data.kline_fetcher import KlineFetcher
+from ..data.money_flow_fetcher import MoneyFlowFetcher
+
+# ── 9大独立策略 ──
+from .momentum.volume_breakout import VolumeBreakoutStrategy
+from .momentum.turnover_rank import TurnoverRankStrategy
+from .momentum.multi_factor import MultiFactorStrategy
+from .momentum.consecutive_positive import ConsecutivePositiveStrategy
+from .momentum.net_inflow import NetInflowStrategy
+from .technical.ai_technical import AITechnicalStrategy
+from .technical.box_breakout import BoxBreakoutStrategy
+from .technical.ma_trend import MATrendStrategy
+from .technical.bottom_rebound import BottomReboundStrategy
 
 
-# 市场状态 → 动态权重
+# ── 9大策略权重 (v2.6.5) ──
 MARKET_STATE_WEIGHTS = {
-    "trend_up": {    # 上涨趋势 → 动量策略加码
-        "volume_surge": 0.20,
-        "turnover_rank": 0.20,
-        "multi_factor": 0.20,
-        "ai_technical": 0.15,
-        "institution": 0.00,
-        "box_breakout": 0.15,     # 上涨趋势箱体突破有效
-        "ma_divergence": 0.10,    # 均线发散配合趋势
+    "trend_up": {
+        "volume_breakout": 0.18,       # 放量突破（上涨趋势机会多）
+        "turnover_rank": 0.14,         # 成交额排名
+        "multi_factor": 0.14,          # 多因子增强
+        "ai_technical": 0.12,          # AI技术面
+        "box_breakout": 0.10,          # 箱体突破
+        "ma_trend": 0.12,              # 均线趋势（顺势）
+        "bottom_rebound": 0.05,        # 底部反弹（上涨趋势机会少）
+        "consecutive_positive": 0.08,  # 连续小阳
+        "net_inflow": 0.07,            # 资金净流入
     },
-    "trend_down": {  # 下跌趋势 → 机构和低吸策略加码
-        "volume_surge": 0.10,
-        "turnover_rank": 0.20,
-        "multi_factor": 0.25,
-        "ai_technical": 0.15,
-        "institution": 0.10,
-        "box_breakout": 0.10,     # 下跌趋势箱体突破谨慎
-        "ma_divergence": 0.10,
+    "trend_down": {
+        "volume_breakout": 0.08,       # 放量突破（下跌趋势谨慎）
+        "turnover_rank": 0.14,         # 成交额排名
+        "multi_factor": 0.17,          # 多因子增强（基数大）
+        "ai_technical": 0.10,          # AI技术面
+        "box_breakout": 0.06,          # 箱体突破（下跌趋势谨慎）
+        "ma_trend": 0.08,              # 均线趋势
+        "bottom_rebound": 0.18,        # 底部反弹（下跌趋势重点！）
+        "consecutive_positive": 0.09,  # 连续小阳（下跌末期吸筹）
+        "net_inflow": 0.10,            # 资金净流入（逆势流入=护盘）
     },
-    "volatile": {     # 震荡市 → 技术面加码
-        "volume_surge": 0.15,
-        "turnover_rank": 0.15,
-        "multi_factor": 0.20,
-        "ai_technical": 0.15,
-        "institution": 0.05,
-        "box_breakout": 0.15,     # 震荡市箱体突破机会多
-        "ma_divergence": 0.15,    # 均线发散提前布局
+    "volatile": {
+        "volume_breakout": 0.14,       # 放量突破
+        "turnover_rank": 0.10,         # 成交额排名
+        "multi_factor": 0.14,          # 多因子增强
+        "ai_technical": 0.12,          # AI技术面
+        "box_breakout": 0.12,          # 箱体突破（震荡市机会多）
+        "ma_trend": 0.12,              # 均线趋势
+        "bottom_rebound": 0.10,        # 底部反弹
+        "consecutive_positive": 0.08,  # 连续小阳
+        "net_inflow": 0.08,            # 资金净流入
     },
 }
 
@@ -58,17 +80,11 @@ def detect_market_state(market_data: List[StockData]) -> str:
     """根据市场数据自动判断市场状态"""
     if not market_data:
         return "volatile"
-
     up_count = sum(1 for s in market_data if s.change_pct > 0)
-    down_count = sum(1 for s in market_data if s.change_pct < 0)
     total = len(market_data)
-
     if total == 0:
         return "volatile"
-
     up_ratio = up_count / total
-
-    # 涨跌比明显偏向一方 → 趋势市
     if up_ratio > 0.60:
         return "trend_up"
     elif up_ratio < 0.40:
@@ -78,17 +94,52 @@ def detect_market_state(market_data: List[StockData]) -> str:
 
 
 class CompositeStrategy(BaseStrategy):
-    """综合策略：多策略加权 + 动态权重 + 可选基本面过滤"""
+    """综合策略：纯编排层，所有子策略均为独立模块"""
+
+    # ── 策略名映射 ──
+    STRATEGY_NAMES = {
+        "volume_breakout": "放量突破",
+        "turnover_rank": "成交额排名",
+        "multi_factor": "多因子增强",
+        "ai_technical": "AI技术面",
+        "box_breakout": "箱体突破",
+        "ma_trend": "均线趋势",
+        "bottom_rebound": "底部反弹",
+        "consecutive_positive": "连续小阳",
+        "net_inflow": "资金净流入",
+    }
+
+    # 子策略注册表（策略key → 策略实例 + 执行方法引用）
+    SUB_STRATEGIES = [
+        ("volume_breakout", VolumeBreakoutStrategy),
+        ("turnover_rank", TurnoverRankStrategy),
+        ("multi_factor", MultiFactorStrategy),
+        ("ai_technical", AITechnicalStrategy),
+        ("box_breakout", BoxBreakoutStrategy),
+        ("ma_trend", MATrendStrategy),
+        ("bottom_rebound", BottomReboundStrategy),
+        ("consecutive_positive", ConsecutivePositiveStrategy),
+        ("net_inflow", NetInflowStrategy),
+    ]
 
     def __init__(self, kline_fetcher: Optional[KlineFetcher] = None):
         super().__init__()
         self.logger = logging.getLogger("AInvest.CompositeStrategy")
         self._last_market_state: str = "volatile"
         self._last_weights: Dict[str, float] = {}
-        self._kline_fetcher = kline_fetcher or KlineFetcher(max_workers=5, delay_per_request=0.1)
-        # 缓存K线数据和技术指标，避免重复获取
+        self._kline_fetcher = kline_fetcher or KlineFetcher(max_workers=8, delay_per_request=0.02)
+        # 缓存
         self._kline_cache: Dict[str, List[StockData]] = {}
         self._indicator_cache: Dict[str, Dict[str, float]] = {}
+        # ── 实例化所有子策略 ──
+        self._strategies: Dict[str, BaseStrategy] = {}
+        for key, cls in self.SUB_STRATEGIES:
+            instance = cls()
+            self._strategies[key] = instance
+        # 资金流向获取器（独立缓存，仅net_inflow使用）
+        self._money_flow_fetcher = MoneyFlowFetcher(max_workers=4)
+        # API失败追踪
+        self._api_failed: set = set()
 
     @property
     def name(self) -> str:
@@ -98,135 +149,117 @@ class CompositeStrategy(BaseStrategy):
     def strategy_type(self) -> StrategyType:
         return StrategyType.COMPOSITE
 
+    # ═══════════════════════════════════════════════════════════════
+    # 主入口
+    # ═══════════════════════════════════════════════════════════════
+
     def execute(
         self,
         market_data: List[StockData],
         params: Dict[str, Any]
     ) -> List[ScanResult]:
-        """执行综合策略"""
-        # 自动判断市场状态
+        """执行综合策略（编排层）"""
         market_state = detect_market_state(market_data)
-        self.logger.info(f"检测市场状态: {market_state}")
+        self.logger.info(f"市场状态: {market_state}")
 
-        # 获取动态权重
+        # 1. 计算动态权重
         weights = self._get_weights(params, market_state)
-
-        # 保存到实例属性，供 StrategyAgent.execute_with_context() 读取
         self._last_market_state = market_state
         self._last_weights = dict(weights)
 
-        # 执行各子策略
-        sub_results = self._execute_sub_strategies(market_data, params)
-        # 缓存子策略结果，避免 engine.py 重复获取
+        # 2. 预获取K线 + 计算指标（一次性，所有策略共享）
+        self._prefetch_kline_and_indicators(market_data)
+        self._inject_shared_cache()
+
+        # 3. 执行所有子策略（独立模块，可增删）
+        sub_results: Dict[str, Dict[str, ScanResult]] = {}
+        for key, strategy in self._strategies.items():
+            try:
+                for result in strategy.execute(market_data, params):
+                    sub_results.setdefault(result.symbol, {})[key] = result
+            except Exception as e:
+                self._api_failed.add(key)
+                self.logger.warning(f"策略 [{key}] 执行失败: {e}，已降权")
+
+        # 存储子策略结果（供 engine 提取各策略 Top 15）
         self._last_sub_results = sub_results
 
-        # 计算综合评分
+        # 4. 综合评分
         stock_scores = self._calculate_composite_scores(sub_results, weights)
 
-        # 应用基本面筛选（可选，默认关闭）
-        filtered_symbols = self._apply_fundamental_filter(
-            stock_scores, params
-        )
-
-        # 生成最终结果
+        # 5. 生成结果
         results = self._generate_results(
-            filtered_symbols, stock_scores, sub_results
+            list(stock_scores.keys()), stock_scores, sub_results
         )
-
         results.sort(key=lambda x: x.score, reverse=True)
+
         self.logger.info(
-            f"综合策略选股完成: {len(results)} 只股票 "
-            f"(市场: {market_state}, 权重: {weights})"
+            f"综合策略完成: {len(results)} 只 "
+            f"(市场: {market_state}, 活跃策略: {len(self._strategies) - len(self._api_failed)}/{len(self._strategies)})"
         )
         return results
 
-    # ─────────────────────────────────────────────
+    # ═══════════════════════════════════════════════════════════════
     # 权重计算
-    # ─────────────────────────────────────────────
+    # ═══════════════════════════════════════════════════════════════
 
     def _get_weights(self, params: Dict[str, Any], market_state: str) -> Dict[str, float]:
-        """
-        获取策略权重（支持动态 + 手动覆盖）
-
-        优先级：
-        1. configs 中 manual_weights 手动指定的
-        2. 根据市场状态自动选择
-        3. 配置中 composite_strategy 的备用默认值
-
-        配置示例（configs/settings.yaml）：
-        ```yaml
-        composite_strategy:
-          dynamic_weights: true      # 开启动态权重
-          manual_weights:            # 手动覆盖（可选）
-            volume_surge: 0.30
-            # 未指定的策略继续使用动态权重
-        ```
-        """
         composite = params.get("composite_strategy", {}) if params else {}
-
-        # 是否开启动态权重
         use_dynamic = composite.get("dynamic_weights", True)
-
-        # 手动覆盖权重
         manual = composite.get("manual_weights", {}) or {}
 
         if not use_dynamic:
-            # 关闭动态 → 使用固定权重
-            self.logger.info("动态权重已关闭，使用固定权重")
             return {
-                "volume_surge": composite.get("volume_surge_weight", 0.20),
-                "turnover_rank": composite.get("turnover_rank_weight", 0.20),
-                "multi_factor": composite.get("multi_factor_weight", 0.20),
-                "ai_technical": composite.get("ai_technical_weight", 0.15),
-                "institution": composite.get("institution_weight", 0.05),
+                "volume_breakout": composite.get("volume_breakout_weight", 0.14),
+                "turnover_rank": composite.get("turnover_rank_weight", 0.14),
+                "multi_factor": composite.get("multi_factor_weight", 0.14),
+                "ai_technical": composite.get("ai_technical_weight", 0.12),
                 "box_breakout": composite.get("box_breakout_weight", 0.10),
-                "ma_divergence": composite.get("ma_divergence_weight", 0.10),
+                "ma_trend": composite.get("ma_trend_weight", 0.10),
+                "bottom_rebound": composite.get("bottom_rebound_weight", 0.10),
+                "consecutive_positive": composite.get("consecutive_positive_weight", 0.08),
+                "net_inflow": composite.get("net_inflow_weight", 0.08),
             }
 
-        # 动态权重
-        weights = dict(MARKET_STATE_WEIGHTS.get(
-            market_state, MARKET_STATE_WEIGHTS["volatile"]
-        ))
+        weights = dict(MARKET_STATE_WEIGHTS.get(market_state, MARKET_STATE_WEIGHTS["volatile"]))
 
-        # 手动覆盖（部分覆盖也支持）
         if manual:
             weights.update(manual)
-            self.logger.info(f"权重已手动覆盖: {manual}")
 
-        # 归一化（确保总和为1.0）
+        # ── API失败的策略降权到0，权重重新分配 ──
+        if self._api_failed:
+            removed_weight = 0
+            for key in list(weights.keys()):
+                if key in self._api_failed:
+                    removed_weight += weights.pop(key, 0)
+            if removed_weight > 0 and weights:
+                total = sum(weights.values())
+                for k in weights:
+                    weights[k] += removed_weight * weights[k] / total
+            self.logger.info(f"API失败策略已降权: {self._api_failed}")
+
+        # 归一化
         total = sum(weights.values())
         if total > 0 and abs(total - 1.0) > 0.01:
             weights = {k: v / total for k, v in weights.items()}
-            self.logger.info(f"权重已归一化: sum={sum(weights.values()):.2f}")
-
-        self.logger.info(f"最终权重({market_state}): {weights}")
         return weights
 
-    # ─────────────────────────────────────────────
-    # 子策略执行
-    # ─────────────────────────────────────────────
+    # ═══════════════════════════════════════════════════════════════
+    # K线预获取 + 指标共享
+    # ═══════════════════════════════════════════════════════════════
 
     def _prefetch_kline_and_indicators(self, market_data: List[StockData]) -> None:
-        """预获取K线数据并计算技术指标（并发，漏斗前置）
-
-        如果K线获取全部失败，设置 _kline_available=False 通知各策略降级
-        """
-        # 收集所有需要K线的股票代码
+        """预获取K线数据并计算技术指标（并发，所有策略共享）"""
         symbols = list({s.symbol for s in market_data if s.change_pct > 0 and s.amount >= 100_000_000})
-        self.logger.info(f"预获取 {len(symbols)} 只股票K线数据...")
+        self.logger.info(f"预获取 {len(symbols)} 只K线...")
 
-        # 并发获取K线
         self._kline_cache = self._kline_fetcher.fetch_batch(symbols, days=60)
-
-        # 判断K线数据是否可用
         self._kline_available = len(self._kline_cache) > 0
+
         if not self._kline_available:
-            self.logger.warning(
-                f"K线数据全部获取失败({len(symbols)}只)，各策略将降级为纯行情指标模式"
-            )
+            self.logger.warning(f"K线获取失败({len(symbols)}只)，策略将降级")
             return
 
-        # 计算技术指标
         import numpy as np
         calc_count = 0
         for symbol, kline_list in self._kline_cache.items():
@@ -239,595 +272,48 @@ class CompositeStrategy(BaseStrategy):
                 self._indicator_cache[symbol] = indicators
                 calc_count += 1
 
-        self.logger.info(f"技术指标计算完成: {calc_count} 只股票")
-
-    def _execute_sub_strategies(
-        self,
-        market_data: List[StockData],
-        params: Dict[str, Any]
-    ) -> Dict[str, Dict[str, ScanResult]]:
-        """执行5个子策略，返回 {symbol: {strategy_name: result}}"""
-        # 预获取K线并计算指标（一次性并发，供多策略共用）
-        self._prefetch_kline_and_indicators(market_data)
-
-        sub_results: Dict[str, Dict[str, ScanResult]] = {}
-
-        for result in self._execute_volume_surge(market_data, params):
-            sub_results.setdefault(result.symbol, {})["volume_surge"] = result
-
-        for result in self._execute_turnover_rank(market_data, params):
-            sub_results.setdefault(result.symbol, {})["turnover_rank"] = result
-
-        for result in self._execute_multi_factor(market_data, params):
-            sub_results.setdefault(result.symbol, {})["multi_factor"] = result
-
-        for result in self._execute_ai_technical(market_data, params):
-            sub_results.setdefault(result.symbol, {})["ai_technical"] = result
-
-        for result in self._execute_institution(market_data, params):
-            sub_results.setdefault(result.symbol, {})["institution"] = result
-
-        for result in self._execute_box_breakout(market_data, params):
-            sub_results.setdefault(result.symbol, {})["box_breakout"] = result
-
-        for result in self._execute_ma_divergence(market_data, params):
-            sub_results.setdefault(result.symbol, {})["ma_divergence"] = result
-
-        return sub_results
-
-    def _execute_volume_surge(self, market_data, params) -> List[ScanResult]:
-        """放量上涨策略 — 使用真实5日均量比 + 新增防套过滤
-
-        v2.0 新增过滤:
-        - 最大涨幅限制（超过视为涨停/追高风险）
-        - 最大连续上涨天数限制
-        - 20日位置过高过滤（高位放量=出货风险）
-        - 振幅过大过滤（巨震风险）
-        """
-        cfg = params.get("volume_surge", {}) if params else {}
-        min_ratio = cfg.get("min_volume_ratio", 2.0)
-        min_change = cfg.get("min_price_change", 1.0)
-        max_change = cfg.get("max_price_change", 8.0)
-        min_amount = cfg.get("min_amount", 100_000_000)
-        max_consecutive_up = cfg.get("max_consecutive_up", 3)
-        max_position_20d = cfg.get("max_position_20d", 85)
-        max_amplitude = cfg.get("max_amplitude", 8.0)
-
-        results = []
-        max_amount = max((s.amount for s in market_data), default=1)
-        filtered_count = {"high_change": 0, "consecutive": 0, "position": 0, "amplitude": 0}
-
-        for stock in market_data:
-            if stock.change_pct < min_change or stock.amount < min_amount:
-                continue
-
-            # 从K线指标缓存获取真实放量倍数（提前读取，用于仓位感知的高涨幅过滤）
-            indicators = self._indicator_cache.get(stock.symbol)
-            if indicators and "volume_ratio" in indicators:
-                volume_ratio = indicators["volume_ratio"]
-            elif not getattr(self, '_kline_available', True):
-                est_ratio = stock.turn_rate / 2.5 if stock.turn_rate > 0 else 1.0
-                volume_ratio = round(est_ratio, 2)
-                if volume_ratio < min_ratio:
-                    continue
-            else:
-                continue
-
-            if volume_ratio < min_ratio:
-                continue
-
-            # ── v2.1 仓位感知的高涨幅过滤 ──
-            # 低位（position_20d < 50）：涨停突破可能是启动信号，允许最高10%涨幅
-            # 高位（position_20d >= 50）：严格过滤，防追高
-            pos_20d = indicators.get("position_20d", 50) if indicators else 50
-            effective_max_change = max_change + 2.0 if pos_20d < 50 else max_change  # 低位放宽2%
-            if stock.change_pct > effective_max_change:
-                filtered_count["high_change"] += 1
-                continue
-            if stock.change_pct > max_change and pos_20d < 50:
-                # 低位涨停突破：不过滤，打标签
-                pass  # 继续执行，后续会在signals中标注
-
-            # ── v2.1 智能防套过滤：区分高位追涨 vs 低位启动 ──
-            pos_20d = indicators.get("position_20d", 50) if indicators else 50
-            consecutive_up = indicators.get("consecutive_up", 0) if indicators else 0
-
-            # 连续上涨 + 高位 → 过滤（高位追涨风险）
-            if consecutive_up > max_consecutive_up and pos_20d > 60:
-                filtered_count["consecutive"] += 1
-                continue
-
-            # 20日高位放量 → 警惕出货
-            if pos_20d > max_position_20d:
-                filtered_count["position"] += 1
-                continue
-
-            # 振幅过大 + 高位 → 过滤；低位大振幅可能是洗盘
-            avg_amp = indicators.get("avg_amplitude_5d", 3) if indicators else 3
-            if avg_amp > max_amplitude and pos_20d > 50:
-                filtered_count["amplitude"] += 1
-                continue
-
-            volume_score = min(volume_ratio / min_ratio * 20, 40)
-            change_score = min(stock.change_pct * 10, 30)
-            amount_score = min(stock.amount / max_amount * 30, 30)
-            score = round(volume_score + change_score + amount_score, 1)
-
-            signals = []
-            sfx = "「放量」"
-            if volume_ratio >= 3.0:
-                signals.append("巨量突破" + sfx)
-            elif volume_ratio >= 2.0:
-                signals.append("温和放量" + sfx)
-            if stock.change_pct >= 5.0:
-                signals.append("强势上涨" + sfx)
-            elif stock.change_pct >= 3.0:
-                signals.append("大幅上涨" + sfx)
-            # 添加位置标签
-            if pos_20d < 30:
-                signals.append("低位启动" + sfx)
-            # 低位涨停突破标签
-            if stock.change_pct > max_change and pos_20d < 50:
-                signals.append("低位涨停突破" + sfx)
-
-            results.append(ScanResult(
-                symbol=stock.symbol,
-                name=stock.name,
-                strategy=StrategyType.VOLUME_SURGE,
-                score=score,
-                signals=signals,
-                data=stock,
-                metadata={"volume_ratio": round(volume_ratio, 2)}
-            ))
-
-        if any(v > 0 for v in filtered_count.values()):
-            self.logger.info(
-                f"放量策略防套过滤: 高涨幅={filtered_count['high_change']} "
-                f"连涨过多={filtered_count['consecutive']} "
-                f"高位={filtered_count['position']} "
-                f"巨震={filtered_count['amplitude']}"
-            )
-
-        results.sort(key=lambda x: x.score, reverse=True)
-        return results
-
-    def _execute_turnover_rank(self, market_data, params) -> List[ScanResult]:
-        """成交额排名策略"""
-        cfg = params.get("turnover_rank", {}) if params else {}
-        top_n = cfg.get("top_n", 20)
-        min_amount = cfg.get("min_amount", 500_000_000)
-
-        sorted_stocks = sorted(market_data, key=lambda x: x.amount, reverse=True)
-        top_stocks = [s for s in sorted_stocks[:top_n] if s.amount >= min_amount]
-
-        results = []
-        max_amount = max((s.amount for s in top_stocks), default=1)
-
-        for rank, stock in enumerate(top_stocks, 1):
-            rank_score = max(50 - (rank - 1) * 2.5, 10)
-            amount_score = (stock.amount / max_amount) * 30
-            change_score = min(max(stock.change_pct, 0) * 5, 20)
-            score = round(rank_score + amount_score + change_score, 1)
-
-            signals = []
-            sfx = "「成交额」"
-            if rank <= 5:
-                signals.append("成交额TOP5" + sfx)
-            elif rank <= 10:
-                signals.append("成交活跃" + sfx)
-            if stock.change_pct > 0:
-                signals.append("资金净流入" + sfx)
-
-            results.append(ScanResult(
-                symbol=stock.symbol,
-                name=stock.name,
-                strategy=StrategyType.TURNOVER_RANK,
-                score=score,
-                signals=signals,
-                data=stock,
-                metadata={"rank": rank, "amount": stock.amount}
-            ))
-
-        return results
-
-    def _execute_multi_factor(self, market_data, params) -> List[ScanResult]:
-        """多因子策略 — 技术因子使用真实指标计算"""
-        cfg = params.get("multi_factor", {}) if params else {}
-        v_weight = cfg.get("volume_weight", 0.20)
-        p_weight = cfg.get("price_weight", 0.25)
-        t_weight = cfg.get("turnover_weight", 0.20)
-        tech_weight = cfg.get("tech_weight", 0.35)
-        min_score = cfg.get("min_score", 50)
-
-        max_amount = max((s.amount for s in market_data), default=1)
-        max_change = max((abs(s.change_pct) for s in market_data), default=1) or 1
-
-        results = []
-        for stock in market_data:
-            # 从指标缓存获取真实技术面评分
-            indicators = self._indicator_cache.get(stock.symbol)
-            if indicators:
-                technical = calc_technical_score(indicators)
-            else:
-                # 无K线数据，使用保守低分
-                technical = 40.0
-
-            factors = {
-                "volume": (stock.amount / max_amount) * 100,
-                "price": max(0, min(stock.change_pct / max_change * 100, 100)),
-                "turnover": min(stock.turn_rate * 10, 100),
-                "technical": technical,
-            }
-            total = (
-                factors["volume"] * v_weight +
-                factors["price"] * p_weight +
-                factors["turnover"] * t_weight +
-                factors["technical"] * tech_weight
-            )
-            if total < min_score:
-                continue
-
-            signals = []
-            sfx = "「多因子」"
-            if factors["volume"] >= 80:
-                signals.append("量能充沛" + sfx)
-            if factors["price"] >= 80:
-                signals.append("涨幅领先" + sfx)
-            if technical >= 70:
-                signals.append("技术面强势" + sfx)
-
-            results.append(ScanResult(
-                symbol=stock.symbol,
-                name=stock.name,
-                strategy=StrategyType.MULTI_FACTOR,
-                score=round(total, 1),
-                signals=signals,
-                data=stock,
-                metadata={"factors": {k: round(v, 1) for k, v in factors.items()}}
-            ))
-
-        results.sort(key=lambda x: x.score, reverse=True)
-        return results
-
-    def _execute_ai_technical(self, market_data, params) -> List[ScanResult]:
-        """AI技术面策略 — 基于真实技术指标计算，K线不可用时降级为行情评分"""
-        cfg = params.get("ai_technical", {}) if params else {}
-        threshold = cfg.get("pattern_threshold", 0.75) * 100
-
-        results = []
-        for stock in market_data:
-            indicators = self._indicator_cache.get(stock.symbol)
-            if not indicators:
-                # K线不可用时的降级：用行情数据粗略评分
-                if not getattr(self, '_kline_available', True):
-                    # 用涨幅+成交额估算一个粗略分数
-                    est_score = 50 + min(stock.change_pct * 3, 20) + min(stock.amount / 5e9 * 10, 15)
-                    if est_score >= threshold:
-                        results.append(ScanResult(
-                            symbol=stock.symbol,
-                            name=stock.name,
-                            strategy=StrategyType.AI_TECHNICAL,
-                            score=round(est_score, 1),
-                            signals=["行情估算(无K线)"],
-                            data=stock,
-                            metadata={"note": "K线不可用，降级为行情估算"}
-                        ))
-                    continue
-                else:
-                    continue  # 正常情况无K线则跳过
-
-            # 使用真实技术指标计算形态评分和趋势评分
-            volume_ratio = indicators.get("volume_ratio", 1.0)
-            pattern_score = calc_pattern_score(indicators, volume_ratio)
-            trend_score = calc_trend_score(indicators)
-
-            pattern_score = min(pattern_score, 100)
-            trend_score = min(trend_score, 100)
-            total_score = pattern_score * 0.5 + trend_score * 0.5
-
-            if total_score < threshold:
-                continue
-
-            signals = []
-            sfx = "「AI技术」"
-            if pattern_score >= 85:
-                signals.append("AI形态突破" + sfx)
-            elif pattern_score >= 75:
-                signals.append("AI形态良好" + sfx)
-            if trend_score >= 80:
-                signals.append("上升趋势确认" + sfx)
-            if indicators.get("macd_golden_cross"):
-                signals.append("MACD金叉" + sfx)
-
-            results.append(ScanResult(
-                symbol=stock.symbol,
-                name=stock.name,
-                strategy=StrategyType.AI_TECHNICAL,
-                score=round(total_score, 1),
-                signals=signals,
-                data=stock,
-                metadata={
-                    "pattern_score": round(pattern_score, 1),
-                    "trend_score": round(trend_score, 1),
-                    "rsi14": round(indicators.get("rsi14", 0), 1),
-                    "volume_ratio": round(volume_ratio, 2),
-                }
-            ))
-
-        results.sort(key=lambda x: x.score, reverse=True)
-        return results
-
-    def _execute_institution(self, market_data, params) -> List[ScanResult]:
-        """机构追踪策略 — 基于成交额+换手率+涨跌幅的代理指标
-
-        注: 真实机构持股数据需接入东财机构持股接口(后续迭代)
-        当前使用以下代理指标替代 random:
-        - 大额成交(成交额排名靠前) → 可能有大资金参与
-        - 换手率适中 → 机构持仓通常换手率较低
-        - 连续上涨 → 可能是机构建仓推动
-        """
-        cfg = params.get("institution", {}) if params else {}
-
-        results = []
-        max_amount = max((s.amount for s in market_data), default=1)
-
-        for stock in market_data:
-            if stock.amount < 200_000_000:  # 成交额至少2亿，小股票机构不太参与
-                continue
-
-            # 代理指标: 用可观测数据推断机构行为
-            amount_rank_score = min(stock.amount / max_amount * 40, 40)  # 成交额越大，大资金越可能参与
-
-            # 换手率评分: 机构股换手率通常在1%-5%之间
-            turn_rate = stock.turn_rate
-            if 1.0 <= turn_rate <= 5.0:
-                turn_score = 25  # 典型机构股换手率
-            elif 0.5 <= turn_rate < 1.0:
-                turn_score = 20  # 低换手，机构锁仓
-            elif 5.0 < turn_rate <= 8.0:
-                turn_score = 15  # 稍高，可能有游资
-            else:
-                turn_score = 5   # 过高过低都不太像机构股
-
-            # 涨幅评分: 温和上涨更符合机构建仓
-            if 0.5 <= stock.change_pct <= 4.0:
-                price_score = 20  # 温和上涨
-            elif 4.0 < stock.change_pct <= 7.0:
-                price_score = 15  # 较强
-            elif stock.change_pct > 0:
-                price_score = 10  # 微涨
-            else:
-                price_score = 0   # 下跌
-
-            # 技术面加分: MACD金叉/均线多头 = 机构可能已完成建仓
-            indicators = self._indicator_cache.get(stock.symbol)
-            tech_bonus = 0
-            if indicators:
-                if indicators.get("macd_golden_cross"):
-                    tech_bonus += 10
-                if indicators.get("ma_bullish_align"):
-                    tech_bonus += 5
-
-            score = round(amount_rank_score + turn_score + price_score + tech_bonus, 1)
-
-            if score < 30:  # 低分不推荐
-                continue
-
-            signals = []
-            sfx = "「机构」"
-            if amount_rank_score >= 30:
-                signals.append("大额成交" + sfx)
-            if turn_score >= 20:
-                signals.append("机构换手率特征" + sfx)
-            if price_score >= 15:
-                signals.append("温和上涨建仓" + sfx)
-            if tech_bonus >= 10:
-                signals.append("技术面确认" + sfx)
-
-            results.append(ScanResult(
-                symbol=stock.symbol,
-                name=stock.name,
-                strategy=StrategyType.INSTITUTION,
-                score=score,
-                signals=signals,
-                data=stock,
-                metadata={
-                    "amount_rank_score": round(amount_rank_score, 1),
-                    "turn_score": turn_score,
-                    "price_score": price_score,
-                    "tech_bonus": tech_bonus,
-                    "note": "代理指标，非真实机构数据",
-                }
-            ))
-
-        results.sort(key=lambda x: x.score, reverse=True)
-        return results
-
-    def _execute_box_breakout(self, market_data, params) -> List[ScanResult]:
-        """箱体突破策略 — 检测长期横盘缩量后放量突破箱体上沿
-
-        典型特征（共达电声 2026-02-10）:
-        - 30日股价在±15%区间内震荡
-        - 日均换手率 < 3%（缩量横盘）
-        - 当日涨幅 > 3%，收盘突破箱体上沿
-        - 当日换手率 > 5日均量的2倍
-        """
-        cfg = params.get("box_breakout", {}) if params else {}
-        max_box_range = cfg.get("max_box_range", 18.0)       # 箱体振幅上限
-        min_box_range = cfg.get("min_box_range", 3.0)         # 箱体振幅下限
-        min_breakout_pct = cfg.get("min_breakout_pct", -1.0)  # 突破上沿阈值（允许接近）
-        min_change = cfg.get("min_price_change", 2.0)         # 当日最小涨幅
-        max_change = cfg.get("max_price_change", 7.0)         # 当日最大涨幅
-        min_amount = cfg.get("min_amount", 100_000_000)       # 最小成交额
-        min_score = cfg.get("min_score", 40)                  # 最低评分
-
-        results = []
-        for stock in market_data:
-            if stock.change_pct < min_change or stock.change_pct > max_change:
-                continue
-            if stock.amount < min_amount:
-                continue
-
-            indicators = self._indicator_cache.get(stock.symbol)
-            if not indicators:
-                continue
-
-            box_range = indicators.get("box_range_30d")
-            if box_range is None or box_range > max_box_range or box_range < min_box_range:
-                continue
-
-            breakout = indicators.get("breakout_pct", -5)
-            if breakout < min_breakout_pct:
-                continue
-
-            score = calc_box_breakout_score(indicators)
-            if score < min_score:
-                continue
-
-            signals = []
-            sfx = "「箱体」"
-            if breakout >= 0:
-                signals.append("突破箱体上沿" + sfx)
-            else:
-                signals.append("接近箱体上沿" + sfx)
-            if indicators.get("box_vol_ratio", 1.0) >= 1.5:
-                signals.append("放量突破" + sfx)
-            pos_20 = indicators.get("position_20d", 50)
-            if pos_20 < 50:
-                signals.append("低位启动" + sfx)
-            if indicators.get("macd_golden_cross"):
-                signals.append("MACD金叉" + sfx)
-
-            results.append(ScanResult(
-                symbol=stock.symbol,
-                name=stock.name,
-                strategy=StrategyType.BOX_BREAKOUT,
-                score=round(score, 1),
-                signals=signals,
-                data=stock,
-                metadata={
-                    "box_range": round(box_range, 1),
-                    "breakout_pct": round(breakout, 2),
-                    "box_vol_ratio": round(indicators.get("box_vol_ratio", 1.0), 2),
-                }
-            ))
-
-        results.sort(key=lambda x: x.score, reverse=True)
-        self.logger.info(f"箱体突破策略: {len(results)} 只股票")
-        return results
-
-    def _execute_ma_divergence(self, market_data, params) -> List[ScanResult]:
-        """均线多头发散策略 — 检测均线从粘合到多头发散的过程
-
-        典型特征:
-        - 过去20天 MA5/MA10/MA20 频繁粘合（距离<2%）
-        - 当日 MA5 > MA10 > MA20（多头排列确认）
-        - 当日涨幅 > 2%，成交量放大
-        - 所处位置不过高
-        """
-        cfg = params.get("ma_divergence", {}) if params else {}
-        max_convergence = cfg.get("max_convergence", 5.0)    # 最大粘合度
-        min_convergence_days = cfg.get("min_convergence_days", 3)  # 最小粘合天数
-        min_change = cfg.get("min_price_change", 1.0)         # 最小涨幅
-        max_change = cfg.get("max_price_change", 7.0)         # 最大涨幅
-        min_amount = cfg.get("min_amount", 100_000_000)       # 最小成交额
-        min_score = cfg.get("min_score", 35)                  # 最低评分
-
-        results = []
-        for stock in market_data:
-            if stock.change_pct < min_change or stock.change_pct > max_change:
-                continue
-            if stock.amount < min_amount:
-                continue
-
-            indicators = self._indicator_cache.get(stock.symbol)
-            if not indicators:
-                continue
-
-            convergence = indicators.get("ma_convergence_20d")
-            if convergence is None or convergence > max_convergence:
-                continue
-
-            conv_days = indicators.get("ma_convergence_days", 0)
-            if conv_days < min_convergence_days:
-                continue
-
-            score = calc_ma_divergence_score(indicators)
-            if score < min_score:
-                continue
-
-            signals = []
-            sfx = "「均线」"
-            if convergence < 2.0:
-                signals.append("均线高度粘合" + sfx)
-            else:
-                signals.append("均线粘合" + sfx)
-            if indicators.get("ma_bullish_align"):
-                signals.append("多头排列发散" + sfx)
-            if indicators.get("macd_golden_cross"):
-                signals.append("MACD金叉" + sfx)
-            pos_20 = indicators.get("position_20d", 50)
-            if pos_20 < 50:
-                signals.append("低位启动" + sfx)
-            elif pos_20 < 70:
-                signals.append("中位启动" + sfx)
-            vol_ratio = indicators.get("volume_ratio", 1.0)
-            if vol_ratio >= 1.5:
-                signals.append("放量配合" + sfx)
-
-            results.append(ScanResult(
-                symbol=stock.symbol,
-                name=stock.name,
-                strategy=StrategyType.MA_DIVERGENCE,
-                score=round(score, 1),
-                signals=signals,
-                data=stock,
-                metadata={
-                    "convergence": round(convergence, 2),
-                    "convergence_days": conv_days,
-                    "volume_ratio": round(indicators.get("volume_ratio", 1.0), 2),
-                }
-            ))
-
-        results.sort(key=lambda x: x.score, reverse=True)
-        self.logger.info(f"均线发散策略: {len(results)} 只股票")
-        return results
-
-    # ─────────────────────────────────────────────
+        self.logger.info(f"指标计算完成: {calc_count} 只")
+
+    def _inject_shared_cache(self):
+        """将K线缓存和指标缓存注入到各子策略"""
+        for key, strategy in self._strategies.items():
+            if hasattr(strategy, '_indicators'):
+                strategy._indicators = self._indicator_cache
+            if hasattr(strategy, '_kline_cache'):
+                strategy._kline_cache = self._kline_cache
+            if hasattr(strategy, '_kline_available'):
+                strategy._kline_available = self._kline_available
+
+    # ═══════════════════════════════════════════════════════════════
     # 综合评分计算
-    # ─────────────────────────────────────────────
+    # ═══════════════════════════════════════════════════════════════
 
     def _calculate_composite_scores(
         self,
         sub_results: Dict[str, Dict[str, ScanResult]],
         weights: Dict[str, float]
     ) -> Dict[str, float]:
-        """计算每只股票的综合评分
-
-        新算法 (v2.0):
-        base = Σ(子策略评分 × 权重)                # 策略共识分(基数)
-        score = base                                # 保留基础分
-              + 位置调整(-20 ~ +20)                 # 位置因子(加分/扣分)
-              + 低吸加分(0 ~ +20)                   # 低吸因子
-              - 防套惩罚(0 ~ -50)                   # 防套扣分
-              + 策略数量加分(0 ~ +5)                # 多策略确认(缩减版)
-        """
+        """综合评分: 策略共识分 + 位置/低吸/回调/均线/防套/多样性"""
         scores = {}
         for symbol, strategies in sub_results.items():
-            # 1. 策略共识分 (基础)
+            # 策略共识分
             strategy_total = 0.0
             for sname, result in strategies.items():
                 w = weights.get(sname, 0.0)
                 strategy_total += min(result.score, 100) * w
 
-            # 2. 位置评分 (-20 ~ +20)
             indicators = self._indicator_cache.get(symbol, {})
+
+            # 位置评分
             position_score = calc_position_score(indicators)
-
-            # 3. 低吸评分 (0 ~ +20, 截断)
+            # 低吸评分
             low_absorb_score = min(calc_low_absorb_score(indicators), 20)
+            # 回调确认
+            pullback_bonus = calc_pullback_confirm_score(indicators)
+            # 均线支撑
+            ma_support_bonus = calc_ma_support_score(indicators)
 
-            # 4. 防套惩罚 (0 ~ -50)
+            # 防套惩罚
             stock_data = None
             for result in strategies.values():
                 if result.data:
@@ -836,80 +322,25 @@ class CompositeStrategy(BaseStrategy):
             anti_trap = 0.0
             if stock_data and indicators:
                 anti_trap = calc_anti_trap_penalty(
-                    indicators,
-                    stock_data.change_pct,
-                    stock_data.turn_rate,
-                    stock_data.amount
+                    indicators, stock_data.change_pct,
+                    stock_data.turn_rate, stock_data.amount
                 )
 
-            # 5. 策略数量加分 (0 ~ +5, 缩减版)
+            # 策略数量加分（无上限）
             count = len(strategies)
-            diversity_bonus = min(count * 1.5, 5.0)
+            diversity_bonus = count * 1.5
 
-            total = round(strategy_total + position_score + low_absorb_score + diversity_bonus - anti_trap, 2)
+            total = round(
+                strategy_total + position_score + low_absorb_score +
+                pullback_bonus + ma_support_bonus + diversity_bonus - anti_trap, 2
+            )
             scores[symbol] = total
 
         return scores
 
-    # ─────────────────────────────────────────────
-    # 基本面过滤（可选，默认关闭）
-    # ─────────────────────────────────────────────
-
-    def _apply_fundamental_filter(
-        self,
-        stock_scores: Dict[str, float],
-        params: Dict[str, Any]
-    ) -> List[str]:
-        """
-        应用基本面筛选，返回通过的股票代码列表
-
-        当前版本：数据层已过滤 ST/停牌股，
-        此函数仅做可选的 PE/PB 过滤（需要配置第三方数据源）。
-
-        配置（configs/settings.yaml）：
-        ```yaml
-        fundamental_filter:
-          enable: false   # 默认关闭（当前无可靠PE/PB数据源）
-          max_pe: 100
-          max_pb: 10
-          min_market_cap: 3e9  # 30亿
-        ```
-        """
-        composite = params.get("composite_strategy", {}) if params else {}
-        ff = params.get("fundamental_filter", {}) if params else {}
-
-        enable = ff.get("enable", False)
-
-        if not enable:
-            self.logger.info("基本面过滤已关闭（enable=false），保留所有股票")
-            return list(stock_scores.keys())
-
-        max_pe = ff.get("max_pe", 100)
-        max_pb = ff.get("max_pb", 10)
-        min_cap = ff.get("min_market_cap", 3e9)
-
-        passed = []
-        # TODO: 接入真实PE/PB数据源后再启用以下过滤逻辑
-        # 当前基本面数据不可用，跳过PE/PB过滤，保留所有股票
-        self.logger.info("基本面过滤: 暂无PE/PB数据源，保留所有股票")
-        return list(stock_scores.keys())
-
-        # 以下为未来接入真实数据后的实现（当前不执行）
-        # for symbol in stock_scores:
-        #     pe = ...  # 从数据源获取
-        #     pb = ...  # 从数据源获取
-        #     cap = ...  # 从数据源获取
-        #     if 0 < pe <= max_pe and 0 < pb <= max_pb and cap >= min_cap:
-        #         passed.append(symbol)
-        # self.logger.info(
-        #     f"基本面过滤: PE<={max_pe}, PB<={max_pb}, "
-        #     f"市值>={min_cap/1e8:.0f}亿 -> 通过 {len(passed)} 只"
-        # )
-        # return passed if passed else list(stock_scores.keys())
-
-    # ─────────────────────────────────────────────
-    # 生成最终结果
-    # ─────────────────────────────────────────────
+    # ═══════════════════════════════════════════════════════════════
+    # 结果生成
+    # ═══════════════════════════════════════════════════════════════
 
     def _generate_results(
         self,
@@ -917,16 +348,7 @@ class CompositeStrategy(BaseStrategy):
         stock_scores: Dict[str, float],
         sub_results: Dict[str, Dict[str, ScanResult]]
     ) -> List[ScanResult]:
-        """将综合评分转换为 ScanResult 列表"""
-        STRATEGY_NAMES = {
-            "volume_surge": "放量上涨",
-            "turnover_rank": "成交额排名",
-            "multi_factor": "多因子",
-            "ai_technical": "AI技术面",
-            "institution": "机构追踪",
-            "box_breakout": "箱体突破",
-            "ma_divergence": "均线发散",
-        }
+        """生成ScanResult列表"""
         results = []
         for symbol in filtered_symbols:
             if symbol not in stock_scores:
@@ -934,29 +356,23 @@ class CompositeStrategy(BaseStrategy):
             score = stock_scores[symbol]
             strat_map = sub_results.get(symbol, {})
 
-            # 收集所有信号
             all_signals = []
-            # 收集命中策略名称
             hit_strategies = []
             for sname, result in strat_map.items():
                 all_signals.extend(result.signals)
-                hit_strategies.append(STRATEGY_NAMES.get(sname, sname))
+                hit_strategies.append(self.STRATEGY_NAMES.get(sname, sname))
 
-            # 把命中策略名称作为前缀信号，方便报告展示
             strategy_signal = "+".join(hit_strategies)
 
-            # 获取K线指标用于评分明细
             indicators = self._indicator_cache.get(symbol, {})
             stock_data = next((r.data for r in strat_map.values() if r.data), None)
 
-            # 计算防套风险标签
+            # 风险标签
             trap_flags = []
             if stock_data and indicators:
                 penalty = calc_anti_trap_penalty(
-                    indicators,
-                    stock_data.change_pct,
-                    stock_data.turn_rate,
-                    stock_data.amount
+                    indicators, stock_data.change_pct,
+                    stock_data.turn_rate, stock_data.amount
                 )
                 if penalty >= 20:
                     trap_flags.append("高风险")
@@ -966,7 +382,6 @@ class CompositeStrategy(BaseStrategy):
                     trap_flags.append("注意")
                 else:
                     trap_flags.append("安全")
-
                 pos_20 = indicators.get("position_20d", 50)
                 if pos_20 > 80:
                     trap_flags.append("高位")
@@ -979,6 +394,8 @@ class CompositeStrategy(BaseStrategy):
                 "hit_strategies": hit_strategies,
                 "position_20d": round(indicators.get("position_20d", 50), 1),
                 "consecutive_up": int(indicators.get("consecutive_up", 0)),
+                "pullback_confirm": bool(indicators.get("pullback_confirm", False)),
+                "ma_support": calc_ma_support_score(indicators) > 0,
                 "trap_flags": trap_flags,
             }
             for sname, result in strat_map.items():

@@ -1,6 +1,6 @@
 """
 放量上涨策略
-选出一段时间内成交量放大且股价上涨的股票
+选出一段时间内成交量放大且股价上涨的标的
 使用真实K线数据计算5日均量比
 """
 from typing import List, Dict, Any, Optional
@@ -16,7 +16,7 @@ class VolumeSurgeStrategy(BaseStrategy):
     """
     放量上涨策略
 
-    选股逻辑:
+    策略逻辑:
     1. 成交量较5日均量放大一定倍数（真实数据）
     2. 股价涨幅达到一定水平
     3. 成交额达到最低门槛
@@ -43,7 +43,7 @@ class VolumeSurgeStrategy(BaseStrategy):
         min_change = params.get("min_price_change", 1.0)
         min_amount = params.get("min_amount", 100_000_000)
 
-        # 筛选候选股票
+        # 筛选候选标的
         candidates = [s for s in market_data
                       if s.change_pct >= min_change and s.amount >= min_amount]
 

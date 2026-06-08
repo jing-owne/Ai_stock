@@ -4,7 +4,7 @@ HTML邮件渲染引擎（公共模块）
 将结构化文本内容渲染为精美的响应式HTML邮件，支持移动端和桌面端。
 
 职责：文本 → HTML 渲染（纯渲染，不依赖SMTP、不依赖业务数据）
-可被选股报告、可转债提醒等任意场景复用。
+可被策略报告、可转债提醒等任意场景复用。
 
 用法：
     from src.common.html_engine import render_email_html
@@ -32,7 +32,7 @@ TITLE_GRADIENT_MAP: Dict[str, str] = {
     '每日一言': 'linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%)',
     '财经动态': 'linear-gradient(135deg, #DBEAFE 0%, #BFDBFE 100%)',
     '策略配置': 'linear-gradient(135deg, #D1FAE5 0%, #A7F3D0 100%)',
-    '股票选择': 'linear-gradient(135deg, #EEF2FF 0%, #E0E7FF 100%)',
+    '标的池': 'linear-gradient(135deg, #EEF2FF 0%, #E0E7FF 100%)',
     '操作建议': 'linear-gradient(135deg, #FCE7F3 0%, #FBCFE8 100%)',
     '今日总结': 'linear-gradient(135deg, #E0E7FF 0%, #C7D2FE 100%)',
 }
@@ -48,7 +48,7 @@ BORDER_COLOR_MAP: Dict[str, str] = {
 }
 
 # 表格头检测关键词
-TABLE_HEADER_KEYWORDS = ('股票', '代码', '名称', '评分', '评级', '转债', '申购', '状态')
+TABLE_HEADER_KEYWORDS = ('标的', '代码', '名称', '评分', '评级', '转债', '申购', '状态')
 
 
 # ══════════════════════════════════════════════════════════════
@@ -284,7 +284,7 @@ def _looks_like_pct(text: str) -> bool:
 # ══════════════════════════════════════════════════════════════
 
 def _highlight_text(line: str) -> str:
-    """高亮文本中的百分比、评分、股票代码"""
+    """高亮文本中的百分比、评分、代码"""
     # 涨跌百分比（涨红跌绿）
     def _color_pct(m: re.Match) -> str:
         val = m.group(1)
@@ -308,7 +308,7 @@ def _highlight_text(line: str) -> str:
         line
     )
 
-    # 股票代码
+    # 代码
     line = re.sub(
         r'([0-9]{6}\.[A-Z]{2})',
         r'<span style="background: #EEF2FF; color: #4F46E5; padding: 2px 6px; '

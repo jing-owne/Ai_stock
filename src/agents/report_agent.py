@@ -141,17 +141,25 @@ class ReportAgent:
         state_desc = state_map.get(market_state, "震荡市") if market_state else "震荡市"
 
         weight_descs = {
-            "volume_surge": "放量上涨",
+            "volume_breakout": "放量突破",
             "turnover_rank": "成交额排名",
-            "multi_factor": "多因子",
+            "multi_factor": "多因子增强",
             "ai_technical": "AI技术面",
-            "institution": "机构追踪",
+            "box_breakout": "箱体突破",
+            "ma_trend": "均线趋势",
+            "bottom_rebound": "底部反弹",
+            "consecutive_positive": "连续小阳",
+            "net_inflow": "资金净流入",
+            # 向后兼容
+            "volume_surge": "放量突破",
+            "institution": "多因子增强",
+            "ma_divergence": "均线趋势",
         }
         w = strategy_weights or {}
 
         lines.append("【策略配置】")
         lines.append("")
-        lines.append(f"• 市场状态: {state_desc}（系统自动判断）")
+        lines.append(f"• 市场状态: {state_desc}（策略小助手自动判断）")
         if w:
             weight_parts = [f"{weight_descs.get(k, k)} {v*100:.0f}%" for k, v in sorted(w.items(), key=lambda x: -x[1]) if v > 0]
             lines.append(f"• 策略权重: {' + '.join(weight_parts)}")
@@ -166,7 +174,7 @@ class ReportAgent:
         lines.append("")
 
         if not results:
-            lines.append("今日暂无符合条件的股票。")
+            lines.append("今日暂无符合条件的标的。")
         else:
             # 按胜率排序取 Top5
             scored_results = []
@@ -199,7 +207,7 @@ class ReportAgent:
                 else:
                     strategy_str = " / ".join(result.signals[:3]) if result.signals else "-"
 
-                # 第1行：股票名称 + 预估胜率
+                # 第1行：名称 + 预估胜率
                 lines.append(f"▶ {i}. {result.name}（{result.symbol}）   预估胜率：<strong style='color:#DC2626;font-weight:bold;'>{win_rate:.1f}%</strong>")
                 # 第2行：现价 + 建议买入价
                 lines.append(f"   现价：{current_price:.2f}元 ({change_str})   建议买入：{suggest_buy_price:.2f}元")
@@ -233,7 +241,7 @@ class ReportAgent:
                 else:
                     strategy_str = " / ".join(result.signals[:3]) if result.signals else "-"
 
-                # 第1行：股票名称 + 成交额
+                # 第1行：名称 + 成交额
                 lines.append(f"▶ {i}. {result.name}（{result.symbol}）  成交额：{amount_str}")
                 # 第2行：评分 + 现价(涨跌幅)
                 lines.append(f"   评分：{score:.1f}分  现价：{current_price:.2f}元 ({change_str})")
@@ -313,8 +321,8 @@ class ReportAgent:
             top3_names = "、".join([f"{r.name}({r.score:.1f}分)" for r in top3])
 
             lines.append(f"▶ 平均评分：{avg_score:.1f}分，上涨家数：{up_count} 只")
-            lines.append(f"▶ 重点推荐：{top3_names}")
-            lines.append(f"▶ 建议：逢低关注前3只股票，设置好止损位")
+            lines.append(f"▶ 重点关注：{top3_names}")
+            lines.append(f"▶ 建议：逢低关注前3只标的，设置好止损位")
 
         lines.append("")
         lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")

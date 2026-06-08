@@ -1,6 +1,6 @@
 """
 策略执行Agent
-负责执行各种量化选股策略
+负责执行各种量化策略
 """
 import logging
 from typing import List, Dict, Any, Optional, Tuple
@@ -15,7 +15,7 @@ class StrategyAgent:
     """
     策略执行Agent
     
-    管理和执行各种量化选股策略
+    管理和执行各种量化策略
     """
     
     def __init__(self, config: Config):

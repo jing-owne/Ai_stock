@@ -107,7 +107,7 @@ class ReportConfig:
     template: str = "default"       # 模板名称
     include_charts: bool = True     # 包含图表
     output_dir: str = "./output"    # 输出目录
-    max_stocks: int = 50           # 最大股票数
+    max_stocks: int = 50           # 最大标的数
 
 
 @dataclass
@@ -116,7 +116,7 @@ class EmailConfig:
     enabled: bool = True           # 启用邮件发送
     debug_mode: bool = False       # 调试模式（只发邮件不抄送）
     skip_money_flow: bool = True   # 跳过耗时资金流向查询
-    sender_name: str = "Marcus策略师"  # 发件人名称
+    sender_name: str = "Marcus策略小助手"  # 发件人名称
     smtp_server: str = "smtp.qq.com"  # QQ邮箱SMTP服务器
     smtp_port: int = 465           # SSL端口
     smtp_user: str = ""             # 发送邮箱
@@ -131,7 +131,7 @@ class BondEmailConfig:
     """新债打新提醒邮件配置（独立于策略邮件池）"""
     enabled: bool = True
     debug_mode: bool = False       # 调试模式（只发邮件不抄送）
-    sender_name: str = "Marcus策略师"
+    sender_name: str = "Marcus策略小助手"
     smtp_server: str = "smtp.qq.com"
     smtp_port: int = 465
     smtp_user: str = ""

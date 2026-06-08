@@ -92,40 +92,48 @@ class ReportGenerator:
         ]
         if weights:
             weight_names = {
-                "volume_surge": "放量上涨",
+                "volume_breakout": "放量突破",
                 "turnover_rank": "成交额排名",
-                "multi_factor": "多因子",
+                "multi_factor": "多因子增强",
                 "ai_technical": "AI技术面",
-                "institution": "机构追踪",
                 "box_breakout": "箱体突破",
-                "ma_divergence": "均线发散",
+                "ma_trend": "均线趋势",
+                "bottom_rebound": "底部反弹",
+                "consecutive_positive": "连续小阳",
+                "net_inflow": "资金净流入",
+                # 向后兼容旧名称
+                "volume_surge": "放量突破",
+                "institution": "多因子增强",
+                "ma_divergence": "均线趋势",
             }
             for k, v in sorted(weights.items(), key=lambda x: -x[1]):
                 if v > 0:
                     lines.append(f"- **{weight_names.get(k, k)}**：{v*100:.0f}%")
         lines.append("")
 
-        # 各子策略 Top 10
+        # 各子策略 Top 15（v2.6.5: 9大策略）
         if sub_top10:
             strategy_display = {
-                "volume_surge": ("🚀 放量上涨策略", "筛选条件：涨幅≥1%、成交额≥1亿、成交量比≥2倍"),
+                "volume_breakout": ("🚀 放量突破策略", "筛选条件：量比≥2倍突破、涨幅1-8%、成交额≥1亿"),
                 "turnover_rank": ("💰 成交额排名策略", "筛选条件：成交额 Top20、成交额≥5亿"),
-                "multi_factor": ("📐 多因子策略", "筛选条件：量价换手综合评分≥50"),
-                "ai_technical": ("🤖 AI技术面策略", "筛选条件：AI形态+趋势评分≥75"),
-                "institution": ("🏦 机构追踪策略", "筛选条件：机构数量≥3家、持仓比≥5%"),
+                "multi_factor": ("📐 多因子增强策略", "筛选条件：量价换手+机构综合评分≥50"),
+                "ai_technical": ("🤖 AI技术面策略", "筛选条件：AI形态+趋势综合评分≥75"),
                 "box_breakout": ("📦 箱体突破策略", "筛选条件：30日箱体振幅<18%、突破上沿、放量确认"),
-                "ma_divergence": ("📈 均线发散策略", "筛选条件：均线粘合<5%、多头排列、量能配合"),
+                "ma_trend": ("📈 均线趋势策略", "筛选条件：多头排列/均线发散、量能配合"),
+                "bottom_rebound": ("🔄 底部反弹策略", "筛选条件：RSI超卖反弹/底部形态、放量确认"),
+                "consecutive_positive": ("🌱 连续小阳吸筹策略", "筛选条件：3-7天连续小阳线、温和放量"),
+                "net_inflow": ("💵 资金净流入策略", "筛选条件：20日连续净流入>10天、量价配合"),
             }
-            lines += ["## 二、各子策略 Top 10 明细", ""]
+            lines += ["## 二、各子策略 Top 15 明细", ""]
 
             for sname, (title, desc) in strategy_display.items():
                 items = sub_top10.get(sname, [])
                 lines += [f"### {title}", f"> {desc}", ""]
                 if not items:
-                    lines += ["*本策略今日无符合条件的股票*", ""]
+                    lines += ["*本策略今日无符合条件的标的*", ""]
                     continue
                 lines += [
-                    "| 排名 | 股票名称 | 代码 | 评分 | 涨幅 | 成交额 | 命中信号 |",
+                    "| 排名 | 名称 | 代码 | 评分 | 涨幅 | 成交额 | 命中信号 |",
                     "|:---:|:---|:---|:---:|:---:|:---:|:---|",
                 ]
                 for i, r in enumerate(items, 1):
@@ -144,11 +152,11 @@ class ReportGenerator:
 
         # 综合 Top 15
         lines += [
-            "## 三、当日策略命中 Top 15 推荐",
+            "## 三、当日策略命中 Top 15",
             "",
-            "综合5大策略加权评分后，Top 15 优选股票：",
+            "综合9大策略加权评分后，Top 15 策略标的：",
             "",
-            "| 排名 | 股票名称 | 代码 | 综合评分 | 涨幅 | 成交额 | 命中策略 |",
+            "| 排名 | 名称 | 代码 | 综合评分 | 涨幅 | 成交额 | 命中策略 |",
             "|:---:|:---|:---|:---:|:---:|:---:|:---|",
         ]
         for i, r in enumerate(results[:15], 1):

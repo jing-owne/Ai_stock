@@ -1,6 +1,6 @@
 """
 数据采集Agent
-负责从各种数据源获取股票市场数据
+负责从各种数据源获取标的市场数据
 
 数据源:
 - eastmoney: 腾讯实时行情接口（push2不可用时自动切换）
@@ -28,7 +28,7 @@ class DataAgent:
 
     主数据源: 腾讯实时行情 qt.gtimg.cn
     备用: 东方财富 push2his K线接口
-    兜底: 模拟数据
+    兜底: 空列表
     """
 
     TENCENT_QUOTE_URL = "http://qt.gtimg.cn/q="
@@ -48,7 +48,7 @@ class DataAgent:
         self._session.headers.update(self.EASTMONEY_HEADERS)
         # 复用 KlineFetcher 获取历史K线（已处理限频+连接复用问题）
         from ..data.kline_fetcher import KlineFetcher
-        self._kline_fetcher = KlineFetcher(max_workers=1, delay_per_request=0.8)
+        self._kline_fetcher = KlineFetcher(max_workers=8, delay_per_request=0.02)
 
     def fetch_market_data(
         self,
@@ -56,7 +56,7 @@ class DataAgent:
         include_index: bool = False
     ) -> List[StockData]:
         """
-        获取市场股票数据（真实数据）
+        获取市场标的数据（真实数据）
 
         Args:
             date: 日期 (YYYY-MM-DD)，默认今天
@@ -65,6 +65,11 @@ class DataAgent:
         Returns:
             StockData列表
         """
+        import time as time_module
+        func_start = time_module.time()
+        func_start_dt = datetime.now()
+        self.logger.info(f"[时间] fetch_market_data 开始 - {func_start_dt.strftime('%H:%M:%S.%f')[:-3]}")
+        
         date = date or datetime.now().strftime("%Y-%m-%d")
 
         # 检查缓存
@@ -72,34 +77,60 @@ class DataAgent:
         if self.config.data_source.cache_enabled and cache_key in self._cache:
             if self._is_cache_valid(cache_key):
                 self.logger.debug("使用缓存数据")
+                self._cache[cache_key]
+                elapsed = time_module.time() - func_start
+                self.logger.info(f"[时间] fetch_market_data 完成(缓存) - 耗时: {elapsed:.2f}秒")
                 return self._cache[cache_key]
 
         # 根据数据源获取数据
         provider = self.config.data_source.provider
-
-        if provider == "sina":
-            data = self._fetch_from_sina(date, include_index)
-        elif provider == "tushare":
-            data = self._fetch_from_tushare(date, include_index)
-        elif provider == "eastmoney":
-            data = self._fetch_from_tencent(date, include_index)
-        else:
-            data = self._fetch_from_tencent(date, include_index)
+        
+        try:
+            if provider == "sina":
+                data_start = time_module.time()
+                self.logger.info(f"[时间] 开始调用 _fetch_from_sina")
+                data = self._fetch_from_sina(date, include_index)
+                data_elapsed = time_module.time() - data_start
+                self.logger.info(f"[时间] _fetch_from_sina 完成 - 耗时: {data_elapsed:.2f}秒, 获取: {len(data)}只")
+            elif provider == "tushare":
+                data_start = time_module.time()
+                self.logger.info(f"[时间] 开始调用 _fetch_from_tushare")
+                data = self._fetch_from_tushare(date, include_index)
+                data_elapsed = time_module.time() - data_start
+                self.logger.info(f"[时间] _fetch_from_tushare 完成 - 耗时: {data_elapsed:.2f}秒, 获取: {len(data)}只")
+            elif provider == "eastmoney":
+                data_start = time_module.time()
+                self.logger.info(f"[时间] 开始调用 _fetch_from_tencent")
+                data = self._fetch_from_tencent(date, include_index)
+                data_elapsed = time_module.time() - data_start
+                self.logger.info(f"[时间] _fetch_from_tencent 完成 - 耗时: {data_elapsed:.2f}秒, 获取: {len(data)}只")
+            else:
+                data_start = time_module.time()
+                self.logger.info(f"[时间] 开始调用 _fetch_from_tencent (默认)")
+                data = self._fetch_from_tencent(date, include_index)
+                data_elapsed = time_module.time() - data_start
+                self.logger.info(f"[时间] _fetch_from_tencent 完成 - 耗时: {data_elapsed:.2f}秒, 获取: {len(data)}只")
+        except Exception as e:
+            data_elapsed = time_module.time() - func_start
+            self.logger.error(f"[时间] fetch_market_data 出错 - 耗时: {data_elapsed:.2f}秒 - 错误: {e}")
+            raise
 
         # 更新缓存
         if self.config.data_source.cache_enabled:
             self._cache[cache_key] = data
             self._cache_time[cache_key] = datetime.now()
 
+        elapsed = time_module.time() - func_start
+        self.logger.info(f"[时间] fetch_market_data 完成 - 总耗时: {elapsed:.2f}秒 ({elapsed/60:.2f}分钟), 获取: {len(data)}只")
         return data
 
     def fetch_stock_data(self, symbol: str, days: int = 30) -> List[StockData]:
         """
-        获取单只股票历史数据
+        获取单只标的历史数据
 
-        Fallback: KlineFetcher(东财) -> _fetch_history_from_eastmoney -> mock
+        Fallback: KlineFetcher(东财) -> _fetch_history_from_eastmoney -> []
         """
-        self.logger.info(f"获取股票{symbol}最近{days}天数据")
+        self.logger.info(f"获取标的{symbol}最近{days}天数据")
 
         try:
             # 优先走 KlineFetcher（已处理限频+连接复用问题）
@@ -112,37 +143,61 @@ class DataAgent:
         try:
             return self._fetch_history_from_eastmoney(symbol, days)
         except Exception as e:
-            self.logger.error(f"获取历史数据失败，使用模拟数据: {e}")
-            return self._generate_mock_history(symbol, days)
+            self.logger.error(f"获取历史数据失败: {e}")
+            return []
 
     def _fetch_from_tencent(self, date: str, include_index: bool) -> List[StockData]:
         """
-        通过腾讯行情接口获取全部A股实时行情
+        通过腾讯行情接口获取A股实时行情
+
+        优化策略：
+        1. 优先使用每日预过滤缓存（约800-1200只），减少扫描量
+        2. 缓存不存在时，先执行预过滤扫描，再使用缓存结果
+        3. 非交易时段尝试东财接口（减少阻塞风险）
 
         腾讯接口: http://qt.gtimg.cn/q=sh600519,sz000858,...
-        一次最多查询约50只股票，分批扫描全部代码
+        一次最多查询约50只标的，分批扫描
         """
-        self.logger.info("通过腾讯行情接口获取真实数据...")
+        import time as time_module
+        from ..data.daily_stock_filter import get_daily_filtered_codes, get_cached_details
 
-        # 生成沪深A股代码扫描列表
-        all_codes = self._generate_a_share_codes()
-        self.logger.info(f"扫描 {len(all_codes)} 个代码...")
+        func_start = time_module.time()
+        func_start_dt = datetime.now()
+        self.logger.info(f"[时间] _fetch_from_tencent 开始 - {func_start_dt.strftime('%H:%M:%S.%f')[:-3]}")
 
-        # 分批查询
+        # ── 步骤1: 获取预过滤代码列表 ──
+        cache_start = time_module.time()
+        filtered_codes = get_daily_filtered_codes()
+        cache_elapsed = time_module.time() - cache_start
+        self.logger.info(
+            f"[时间] 获取预过滤代码列表完成 - 耗时: {cache_elapsed:.2f}秒, "
+            f"过滤后: {len(filtered_codes)}只"
+        )
+
+        # ── 步骤2: 仅查询过滤后的代码 ──
         batch_size = 50
         all_stocks = []
-        total_batches = (len(all_codes) + batch_size - 1) // batch_size
+        total_batches = (len(filtered_codes) + batch_size - 1) // batch_size
         failed_batches = 0
 
-        for i in range(0, len(all_codes), batch_size):
-            batch = all_codes[i:i + batch_size]
+        self.logger.info(
+            f"[时间] 开始分批查询(预过滤后)，总批次数: {total_batches} "
+            f"(原始约300+批 → 优化后{total_batches}批, 减少{300-total_batches}批)"
+        )
+
+        for i in range(0, len(filtered_codes), batch_size):
+            batch = filtered_codes[i:i + batch_size]
             batch_num = i // batch_size + 1
+            batch_start = time_module.time()
 
             try:
                 url = f"{self.TENCENT_QUOTE_URL}{','.join(batch)}"
+                resp_start = time_module.time()
                 resp = self._session.get(url, timeout=self.config.data_source.timeout)
-                resp.raise_for_status()
+                resp_elapsed = time_module.time() - resp_start
+                self.logger.debug(f"[时间] 批次{batch_num}/{total_batches} 请求完成 - 耗时: {resp_elapsed:.2f}秒")
 
+                resp.raise_for_status()
                 lines = resp.text.strip().split(';')
 
                 for line in lines:
@@ -150,26 +205,36 @@ class DataAgent:
                     if stock:
                         all_stocks.append(stock)
 
-                if batch_num % 50 == 0:
+                batch_elapsed = time_module.time() - batch_start
+                if batch_num % 20 == 0 or batch_num == total_batches:
                     self.logger.info(
                         f"扫描进度: {batch_num}/{total_batches}, "
-                        f"已获取 {len(all_stocks)} 只股票"
+                        f"已获取 {len(all_stocks)} 只标的, "
+                        f"本批次耗时: {batch_elapsed:.2f}秒"
                     )
 
             except Exception as e:
+                batch_elapsed = time_module.time() - batch_start
                 failed_batches += 1
-                self.logger.warning(f"批次 {batch_num} 获取失败: {e}")
+                self.logger.warning(f"批次 {batch_num} 获取失败(耗时{batch_elapsed:.2f}秒): {e}")
 
-            time.sleep(0.1)
+            time.sleep(0.03)
 
         if failed_batches > 0:
             self.logger.warning(f"共 {failed_batches} 个批次失败")
 
         if not all_stocks:
             self.logger.warning("腾讯接口无有效数据，尝试东方财富K线接口")
+            elapsed = time_module.time() - func_start
+            self.logger.info(f"[时间] _fetch_from_tencent 完成(无数据) - 耗时: {elapsed:.2f}秒")
             return self._fetch_from_eastmoney(date, include_index)
 
-        self.logger.info(f"腾讯接口获取完成: {len(all_stocks)} 只股票")
+        elapsed = time_module.time() - func_start
+        self.logger.info(
+            f"[时间] _fetch_from_tencent 完成 - 耗时: {elapsed:.2f}秒 "
+            f"({elapsed/60:.2f}分钟), 获取: {len(all_stocks)}只 "
+            f"(预过滤节省约{300-total_batches}批请求)"
+        )
         return all_stocks
 
     def _parse_tencent_line(self, line: str, date: str) -> Optional[StockData]:
@@ -189,16 +254,22 @@ class DataAgent:
             if close <= 0:
                 return None
 
-            # 过滤股价>100元
-            if close > 100:
+            # 过滤股价>120元（预过滤已处理，此处为二次保险）
+            if close > 120:
                 return None
 
-            # 过滤规则
+            # 过滤股价<3元（低价垃圾股）
+            if close < 3.0:
+                return None
+
+            # 过滤规则（预过滤已处理，此处为二次保险）
             if "ST" in name:
                 return None
             if code.startswith("688"):
                 return None
             if code.startswith("8"):
+                return None
+            if code.startswith("9"):
                 return None
 
             # 过滤涨停(涨幅>=8%)
@@ -280,8 +351,8 @@ class DataAgent:
         """
         从东方财富K线接口获取数据（备用方案）
 
-        由于push2不可用，使用push2his获取每只股票的日K线
-        注意：此方案需要已知股票代码列表，效率较低
+        由于push2不可用，使用push2his获取每只标的的日K线
+        注意：此方案需要已知代码列表，效率较低
         """
         self.logger.info("尝试东方财富K线接口...")
 
@@ -357,14 +428,14 @@ class DataAgent:
             time.sleep(0.2)
 
         if all_stocks:
-            self.logger.info(f"东方财富K线获取完成: {len(all_stocks)} 只股票")
+            self.logger.info(f"东方财富K线获取完成: {len(all_stocks)} 只标的")
             return all_stocks
 
-        self.logger.warning("东方财富也无数据，回退到模拟数据")
-        return self._generate_mock_data(date)
+        self.logger.warning("东方财富也无数据，返回空列表")
+        return []
 
     def _fetch_history_from_eastmoney(self, symbol: str, days: int = 30) -> List[StockData]:
-        """从东方财富获取单只股票历史K线"""
+        """从东方财富获取单只标的历史K线"""
         if symbol.startswith("6"):
             secid = f"1.{symbol}"
         else:
@@ -417,65 +488,6 @@ class DataAgent:
             ))
 
         return stock_list
-
-    def _generate_mock_history(self, symbol: str, days: int = 30) -> List[StockData]:
-        """生成模拟历史数据"""
-        import random
-        data = []
-        base_date = datetime.now()
-
-        for i in range(days):
-            d = (base_date - timedelta(days=days - i - 1)).strftime("%Y-%m-%d")
-            base_price = random.uniform(10, 100)
-
-            data.append(StockData(
-                symbol=symbol,
-                name=f"股票{symbol}",
-                date=d,
-                open=round(base_price * random.uniform(0.98, 1.02), 2),
-                high=round(base_price * random.uniform(1.0, 1.05), 2),
-                low=round(base_price * random.uniform(0.95, 1.0), 2),
-                close=round(base_price, 2),
-                volume=random.uniform(1000000, 10000000),
-                amount=random.uniform(100000000, 1000000000),
-                change_pct=round(random.uniform(-5, 5), 2),
-                turn_rate=round(random.uniform(1, 10), 2),
-            ))
-
-        return data
-
-    def _generate_mock_data(self, date: str) -> List[StockData]:
-        """生成模拟数据用于演示（仅作为最后回退）"""
-        import random
-        symbols = [
-            ("600519", "贵州茅台"), ("000858", "五粮液"),
-            ("601318", "中国平安"), ("000333", "美的集团"),
-            ("002475", "立讯精密"), ("300750", "宁德时代"),
-            ("600036", "招商银行"), ("000001", "平安银行"),
-            ("601888", "中国中免"), ("300059", "东方财富"),
-            ("002594", "比亚迪"), ("600900", "长江电力"),
-            ("601012", "隆基绿能"), ("002352", "顺丰控股"),
-            ("600276", "恒瑞医药"), ("000725", "京东方A"),
-            ("601166", "兴业银行"), ("600887", "伊利股份"),
-            ("002714", "牧原股份"), ("300015", "爱尔眼科"),
-        ]
-
-        data = []
-        for symbol, name in symbols:
-            bp = random.uniform(10, 200)
-            data.append(StockData(
-                symbol=symbol, name=name, date=date,
-                open=round(bp * random.uniform(0.98, 1.02), 2),
-                high=round(bp * random.uniform(1.0, 1.08), 2),
-                low=round(bp * random.uniform(0.92, 1.0), 2),
-                close=round(bp, 2),
-                volume=random.uniform(5000000, 50000000),
-                amount=random.uniform(100000000, 5000000000),
-                change_pct=round(random.uniform(-3, 5), 2),
-                turn_rate=round(random.uniform(1, 15), 2),
-            ))
-
-        return data
 
     def _is_cache_valid(self, cache_key: str) -> bool:
         """检查缓存是否有效"""
