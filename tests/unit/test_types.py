@@ -11,7 +11,7 @@ class TestStockData:
     """测试StockData类"""
     
     def test_create_valid_stock_data(self):
-        """测试创建有效的股票数据"""
+        """测试创建有效的标的数据"""
         stock = StockData(
             symbol="600519",
             name="贵州茅台",

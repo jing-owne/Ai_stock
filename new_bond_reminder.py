@@ -9,7 +9,6 @@
   4. 无新债 → 静默退出
 
 调试模式（--debug）：只发送主收件人，不发送抄送
-测试模式（--test）：使用模拟数据发送测试邮件查看UI效果
 
 导出函数：
   get_new_bonds_today()     → 今日可申购新债
@@ -43,50 +42,6 @@ setup_root_logger()
 logger = get_logger("BondReminder")
 
 
-# ── 模拟测试数据 ──
-MOCK_BONDS_TODAY = [
-    {'bond_code': '113686.SH', 'bond_name': '测试转债',
-     'apply_code': '754686', 'apply_date': datetime.now().strftime('%m-%d'),
-     'price': '100.00', 'rating': 'AA+', 'max_shares': '10000'},
-    {'bond_code': '123250.SZ', 'bond_name': '演示转债',
-     'apply_code': '370750', 'apply_date': datetime.now().strftime('%m-%d'),
-     'price': '100.00', 'rating': 'AA', 'max_shares': '10000'},
-    {'bond_code': '113687.SH', 'bond_name': 'UI预览EB',
-     'apply_code': '754687', 'apply_date': datetime.now().strftime('%m-%d'),
-     'price': '100.00', 'rating': 'AAA', 'max_shares': '5000'},
-]
-
-MOCK_BONDS_FUTURE = [
-    {'bond_name': '迪威转债', 'apply_date': '20260604', 'stock_name': '迪威尔', 'price': '32.49', 'rating': 'AA'},
-    {'bond_name': '肇民转债', 'apply_date': '20260615', 'stock_name': '肇民科技', 'price': '28.50', 'rating': 'AA-'},
-    {'bond_name': '中科转债', 'apply_date': '20260620', 'stock_name': '中科曙光', 'price': '45.00', 'rating': 'AAA'},
-]
-
-MOCK_APPROVED = [
-    {'bond_name': '南芯转债', 'stock_code': '南芯科技', 'status': '已获核准批文',
-     'notice_date': '2026-05', 'conv_price': '待公告'},
-    {'bond_name': '春风转债', 'stock_code': '春风动力', 'status': '已获核准(已完成分红)',
-     'notice_date': '2026-05', 'conv_price': '待公告'},
-    {'bond_name': '华翔转债', 'stock_code': '华翔股份', 'status': '已获核准(已完成分红)',
-     'notice_date': '2026-05', 'conv_price': '待公告'},
-    {'bond_name': '中科转债', 'stock_code': '中科曙光', 'status': '已提交注册(80亿)',
-     'notice_date': '2026-05', 'conv_price': '待公告'},
-    {'bond_name': '赛恩斯转债', 'stock_code': '赛恩斯', 'status': '即将上会审核',
-     'notice_date': '2026-06', 'conv_price': '待公告'},
-]
-
-MOCK_PIPELINE = {
-    'stats': {'approved_waiting': 18, 'passed_committee': 11,
-              'upcoming_review': 6, 'inquiry_done': 6},
-    'lists': {
-        'approved_waiting': ['南芯科技', '金帝股份', '豪能股份', '科博达', '维科精密', '中汽股份', '四方科技', '圣泉集团'],
-        'passed_committee': ['肇民科技', '奥普特', '中科曙光(已提交注册)', '炬申股份(已提交注册)', '特宝生物(已提交注册)'],
-        'upcoming_review': ['赛恩斯', '振华股份', '先锋精科', '久吾高科', '中仑新材', '千红制药'],
-        'completed_dividend': ['春风动力', '爱科科技', '金三江', '迪威尔', '华翔股份', '科博达', '中汽股份'],
-    },
-    'source_url': 'https://caifuhao.eastmoney.com/news/20260530151213071344710',
-    'source_name': '东方财富财富号·待发可转债统计表(截至2026-05-30)',
-}
 
 
 # ═══════════════════════════════════════════════════════
@@ -192,11 +147,11 @@ def get_new_bonds_today() -> List[Dict]:
                 continue
             if parsed_date != today:
                 continue
-            stock_name = str(row.get('股票简称', ''))
+            stock_name = str(row.get('标的简称', ''))
             if not any(kw in stock_name for kw in ['转债', 'EB', '可转债', '可交债', '交换债']):
                 continue
             bonds.append({
-                'bond_code': str(row.get('股票代码', '')),
+                'bond_code': str(row.get('代码', '')),
                 'bond_name': stock_name,
                 'apply_code': str(row.get('申购代码', '')),
                 'apply_date': today.strftime('%m-%d'),
@@ -482,7 +437,7 @@ def generate_bond_content(
     # ── 打新债小贴士 ──
     lines.append("【打新债小贴士】")
     lines.append("")
-    lines.append("• 无需持有股票市值，空账户也可参与申购")
+    lines.append("• 无需持有标的市值，空账户也可参与申购")
     lines.append("• 建议顶格申购（10000张起），提高中签率")
     lines.append("• 中签后T+2日16:00前确保账户有足额资金")
     lines.append("• 上市首日可择机卖出锁定收益")
@@ -566,34 +521,25 @@ def main():
     parser = argparse.ArgumentParser(description='新债打新提醒（内置模块版）')
     parser.add_argument('--debug', action='store_true',
                         help='调试模式：只发收件人，不发送抄送')
-    parser.add_argument('--test', action='store_true',
-                        help='测试模式：使用模拟数据发送邮件预览UI效果')
     args = parser.parse_args()
 
-    mode_label = "测试" if args.test else ("调试" if args.debug else "正式")
+    mode_label = "调试" if args.debug else "正式"
     logger.info("=" * 50)
     logger.info(f"新债打新提醒 [{mode_label}] — 开始检查")
 
     # ── 交易日判断（复用 check_trading）──
-    if not args.test:
-        is_td, reason = is_trading_day()
-        if not is_td:
-            logger.info(f"今日非交易日({reason})，跳过")
-            return 0
+    is_td, reason = is_trading_day()
+    if not is_td:
+        logger.info(f"今日非交易日({reason})，跳过")
+        return 0
 
     # ── 获取数据 ──
-    if args.test:
-        bonds_today = MOCK_BONDS_TODAY
-        bonds_future = MOCK_BONDS_FUTURE
-        future_source = "模拟数据"
-        pipeline = MOCK_PIPELINE
-    else:
-        bonds_today = get_new_bonds_today()
-        if not bonds_today:
-            logger.info("今日无新债可申购，不发送邮件")
-            return 0
-        bonds_future, future_source = get_future_bonds()
-        _, pipeline, _ = get_approved_bond_news()
+    bonds_today = get_new_bonds_today()
+    if not bonds_today:
+        logger.info("今日无新债可申购，不发送邮件")
+        return 0
+    bonds_future, future_source = get_future_bonds()
+    _, pipeline, _ = get_approved_bond_news()
 
     # ── 发送 ──
     pipeline_bonds = len(pipeline.get('lists', {}).get('approved_waiting', [])) if pipeline else 0
@@ -601,7 +547,7 @@ def main():
 
     success = send_bond_email(
         bonds_today, bonds_future, future_source, pipeline,
-        debug=args.debug or args.test
+        debug=args.debug
     )
 
     return 0 if success else 1

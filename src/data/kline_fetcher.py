@@ -28,7 +28,7 @@ class KlineFetcher:
     """K线数据获取器（双源 fallback：东财 → 新浪）"""
 
     EASTMONEY_KLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
-    SINA_KLINE_URL = "https://money.finance.sina.com.cn/quotes_service/api/json_v2.6.5php/CN_MarketData.getKLineData"
+    SINA_KLINE_URL = "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData"
     HEADERS = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
