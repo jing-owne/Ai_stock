@@ -21,6 +21,7 @@ class StrategyType(Enum):
     BOX_BREAKOUT = "box_breakout"             # 箱体突破
     MA_TREND = "ma_trend"                     # 均线趋势 = ma_divergence + sustained_uptrend
     BOTTOM_REBOUND = "bottom_rebound"         # 底部反弹 = rsi_oversold + bottom_rebound
+    TREND_CONFIRMATION = "trend_confirmation" # 追涨确认信号 (v2.6.8 新增，来自hikyuu回测)
 
     # 综合
     COMPOSITE = "composite"                   # 综合策略（整合9大策略）

@@ -1,12 +1,12 @@
 """
-综合策略 (Composite Strategy) v2.6.5
+综合策略 (Composite Strategy) v2.6.8
 
-整合9大独立量化策略，按动态权重分配综合评分。
-所有策略均为独立模块，支持单独增删和测试。
+整合10大独立量化策略，按动态权重分配综合评分。
+选股采用双轨制：底部反弹(5只) + 放量突破(5只) = Top10
 
 架构:
-- composite_strategy.py: 编排层（K线预取、指标共享、权重计算、综合评分）
-- strategies/momentum/*.py: 动量类策略
+- composite_strategy.py: 编排层（K线预取、指标共享、权重计算、双轨制选股）
+- strategies/momentum/*.py: 动量类策略（含新增追涨确认）
 - strategies/technical/*.py: 技术类策略
 
 策略权重（根据市场状态自动调整，总和=1.0）：
@@ -27,52 +27,56 @@ from ..core.indicators import (
 from ..data.kline_fetcher import KlineFetcher
 from ..data.money_flow_fetcher import MoneyFlowFetcher
 
-# ── 9大独立策略 ──
+# ── 10大独立策略 ──
 from .momentum.volume_breakout import VolumeBreakoutStrategy
 from .momentum.turnover_rank import TurnoverRankStrategy
 from .momentum.multi_factor import MultiFactorStrategy
 from .momentum.consecutive_positive import ConsecutivePositiveStrategy
 from .momentum.net_inflow import NetInflowStrategy
+from .momentum.trend_confirmation import TrendConfirmationStrategy
 from .technical.ai_technical import AITechnicalStrategy
 from .technical.box_breakout import BoxBreakoutStrategy
 from .technical.ma_trend import MATrendStrategy
 from .technical.bottom_rebound import BottomReboundStrategy
 
 
-# ── 9大策略权重 (v2.6.5) ──
+# ── 10大策略权重 (v2.6.8) ──
 MARKET_STATE_WEIGHTS = {
     "trend_up": {
-        "volume_breakout": 0.18,       # 放量突破（上涨趋势机会多）
-        "turnover_rank": 0.14,         # 成交额排名
-        "multi_factor": 0.14,          # 多因子增强
-        "ai_technical": 0.12,          # AI技术面
+        "volume_breakout": 0.16,       # 放量突破（上涨趋势机会多）
+        "turnover_rank": 0.12,         # 成交额排名
+        "multi_factor": 0.12,          # 多因子增强
+        "ai_technical": 0.10,          # AI技术面
         "box_breakout": 0.10,          # 箱体突破
-        "ma_trend": 0.12,              # 均线趋势（顺势）
+        "ma_trend": 0.10,              # 均线趋势（顺势）
         "bottom_rebound": 0.05,        # 底部反弹（上涨趋势机会少）
         "consecutive_positive": 0.08,  # 连续小阳
         "net_inflow": 0.07,            # 资金净流入
+        "trend_confirmation": 0.10,    # 追涨确认（v2.6.8 from hikyuu）
     },
     "trend_down": {
         "volume_breakout": 0.08,       # 放量突破（下跌趋势谨慎）
-        "turnover_rank": 0.14,         # 成交额排名
-        "multi_factor": 0.17,          # 多因子增强（基数大）
+        "turnover_rank": 0.12,         # 成交额排名
+        "multi_factor": 0.15,          # 多因子增强（基数大）
         "ai_technical": 0.10,          # AI技术面
         "box_breakout": 0.06,          # 箱体突破（下跌趋势谨慎）
         "ma_trend": 0.08,              # 均线趋势
         "bottom_rebound": 0.18,        # 底部反弹（下跌趋势重点！）
         "consecutive_positive": 0.09,  # 连续小阳（下跌末期吸筹）
-        "net_inflow": 0.10,            # 资金净流入（逆势流入=护盘）
+        "net_inflow": 0.08,            # 资金净流入（逆势流入=护盘）
+        "trend_confirmation": 0.06,    # 追涨确认（下跌趋势降权）
     },
     "volatile": {
-        "volume_breakout": 0.14,       # 放量突破
-        "turnover_rank": 0.10,         # 成交额排名
-        "multi_factor": 0.14,          # 多因子增强
-        "ai_technical": 0.12,          # AI技术面
-        "box_breakout": 0.12,          # 箱体突破（震荡市机会多）
-        "ma_trend": 0.12,              # 均线趋势
+        "volume_breakout": 0.13,       # 放量突破
+        "turnover_rank": 0.09,         # 成交额排名
+        "multi_factor": 0.12,          # 多因子增强
+        "ai_technical": 0.10,          # AI技术面
+        "box_breakout": 0.10,          # 箱体突破（震荡市机会多）
+        "ma_trend": 0.10,              # 均线趋势
         "bottom_rebound": 0.10,        # 底部反弹
         "consecutive_positive": 0.08,  # 连续小阳
         "net_inflow": 0.08,            # 资金净流入
+        "trend_confirmation": 0.10,    # 追涨确认（v2.6.8 from hikyuu）
     },
 }
 
@@ -108,6 +112,7 @@ class CompositeStrategy(BaseStrategy):
         "bottom_rebound": "底部反弹",
         "consecutive_positive": "连续小阳",
         "net_inflow": "资金净流入",
+        "trend_confirmation": "追涨确认",
     }
 
     # 子策略注册表（策略key → 策略实例 + 执行方法引用）
@@ -121,6 +126,7 @@ class CompositeStrategy(BaseStrategy):
         ("bottom_rebound", BottomReboundStrategy),
         ("consecutive_positive", ConsecutivePositiveStrategy),
         ("net_inflow", NetInflowStrategy),
+        ("trend_confirmation", TrendConfirmationStrategy),
     ]
 
     def __init__(self, kline_fetcher: Optional[KlineFetcher] = None):
@@ -194,6 +200,9 @@ class CompositeStrategy(BaseStrategy):
         )
         results.sort(key=lambda x: x.score, reverse=True)
 
+        # 6. 双轨制Top10: 底部反弹(5) + 放量突破(5) (v2.6.8)
+        results = self._apply_dual_track(results, sub_results)
+
         self.logger.info(
             f"综合策略完成: {len(results)} 只 "
             f"(市场: {market_state}, 活跃策略: {len(self._strategies) - len(self._api_failed)}/{len(self._strategies)})"
@@ -220,6 +229,7 @@ class CompositeStrategy(BaseStrategy):
                 "bottom_rebound": composite.get("bottom_rebound_weight", 0.10),
                 "consecutive_positive": composite.get("consecutive_positive_weight", 0.08),
                 "net_inflow": composite.get("net_inflow_weight", 0.08),
+                "trend_confirmation": composite.get("trend_confirmation_weight", 0.08),
             }
 
         weights = dict(MARKET_STATE_WEIGHTS.get(market_state, MARKET_STATE_WEIGHTS["volatile"]))
@@ -419,3 +429,72 @@ class CompositeStrategy(BaseStrategy):
                 metadata=metadata
             ))
         return results
+
+    # ═══════════════════════════════════════════════════════════════
+    # 双轨制Top10: 底部反弹(5) + 放量突破(5) (v2.6.8)
+    # ═══════════════════════════════════════════════════════════════
+
+    def _apply_dual_track(
+        self,
+        results: List[ScanResult],
+        sub_results: Dict[str, Dict[str, ScanResult]]
+    ) -> List[ScanResult]:
+        """
+        双轨制选股: 底部反弹独立Top5 + 放量突破独立Top5 → Top10
+        去重规则: 若同一标的两个轨道都命中，保留底部反弹标签，放量突破补位
+        """
+        # ── 轨道1: 底部反弹 Top5 ──
+        bottom_rebound_candidates = []
+        for symbol, strategies in sub_results.items():
+            if "bottom_rebound" in strategies:
+                br = strategies["bottom_rebound"]
+                bottom_rebound_candidates.append((symbol, br.score))
+        bottom_rebound_candidates.sort(key=lambda x: -x[1])
+        br_top5 = {s: ("底部反弹", sc) for s, sc in bottom_rebound_candidates[:5]}
+
+        # ── 轨道2: 放量突破 Top5 ──
+        volume_breakout_candidates = []
+        for symbol, strategies in sub_results.items():
+            if "volume_breakout" in strategies:
+                vb = strategies["volume_breakout"]
+                volume_breakout_candidates.append((symbol, vb.score))
+        volume_breakout_candidates.sort(key=lambda x: -x[1])
+        vb_top5 = {s: ("放量突破", sc) for s, sc in volume_breakout_candidates[:5]}
+
+        self.logger.info(
+            f"双轨制选股: 底部反弹={len(br_top5)}只, 放量突破={len(vb_top5)}只"
+        )
+
+        # ── 合并去重 ──
+        track_map = {}
+        used = set()
+
+        for symbol, (track, score) in br_top5.items():
+            track_map[symbol] = (track, score)
+            used.add(symbol)
+
+        for symbol, (track, score) in vb_top5.items():
+            if symbol not in used:
+                track_map[symbol] = (track, score)
+                used.add(symbol)
+            else:
+                # 重叠: 从放量突破候选中补位1只
+                for alt_symbol, alt_score in volume_breakout_candidates:
+                    if alt_symbol not in used:
+                        track_map[alt_symbol] = ("放量突破", alt_score)
+                        used.add(alt_symbol)
+                        break
+                self.logger.info(f"双轨重叠: {symbol} 已补位")
+
+        # ── 应用标签 ──
+        result_map = {r.symbol: r for r in results}
+        tagged_results = []
+        for symbol, (track_name, track_score) in track_map.items():
+            if symbol in result_map:
+                r = result_map[symbol]
+                r.metadata["source_track"] = track_name
+                r.metadata["track_raw_score"] = round(track_score, 1)
+                tagged_results.append(r)
+
+        tagged_results.sort(key=lambda x: x.score, reverse=True)
+        return tagged_results

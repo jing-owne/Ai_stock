@@ -207,8 +207,10 @@ class ReportAgent:
                 else:
                     strategy_str = " / ".join(result.signals[:3]) if result.signals else "-"
 
-                # 第1行：名称 + 预估胜率
-                lines.append(f"▶ {i}. {result.name}（{result.symbol}）   预估胜率：<strong style='color:#DC2626;font-weight:bold;'>{win_rate:.1f}%</strong>")
+                # 第1行：名称 + 预估胜率 + 轨道标签
+                source_track = result.metadata.get("source_track", "")
+                track_tag = f" <span style='background:#F97316;color:#fff;padding:1px 6px;border-radius:3px;font-size:11px;'>{source_track}</span>" if source_track else ""
+                lines.append(f"▶ {i}. {result.name}（{result.symbol}）{track_tag}   预估胜率：<strong style='color:#DC2626;font-weight:bold;'>{win_rate:.1f}%</strong>")
                 # 第2行：现价 + 建议买入价
                 lines.append(f"   现价：{current_price:.2f}元 ({change_str})   建议买入：{suggest_buy_price:.2f}元")
                 # 第3行：止盈止损
@@ -220,18 +222,22 @@ class ReportAgent:
         lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         lines.append("")
 
-        # ── 策略命中TOP15 ─────────────────────────────
-        lines.append("【策略命中TOP15】")
+        # ── 双轨制TOP10 ─────────────────────────────
+        lines.append("【双轨制TOP10 — 底部反弹(5) + 放量突破(5)】")
         lines.append("")
 
         if results:
-            for i, result in enumerate(results[:15], 1):
+            for i, result in enumerate(results[:10], 1):
                 current_price = result.data.close if result.data else 0
                 change_pct = result.data.change_pct if result.data else 0
                 amount = result.data.amount if result.data else 0
                 score = result.score
                 change_str = f"{change_pct:+.2f}%"
                 amount_str = f"{amount/1e8:.2f}亿" if amount >= 1e8 else f"{amount/1e4:.0f}万" if amount > 0 else "N/A"
+
+                # 来源轨道标签
+                source_track = result.metadata.get("source_track", "")
+                track_tag = f" [{source_track}]" if source_track else ""
 
                 # 从 metadata 中获取命中策略名称
                 hit_strategies = result.metadata.get("hit_strategies", [])
@@ -241,8 +247,8 @@ class ReportAgent:
                 else:
                     strategy_str = " / ".join(result.signals[:3]) if result.signals else "-"
 
-                # 第1行：名称 + 成交额
-                lines.append(f"▶ {i}. {result.name}（{result.symbol}）  成交额：{amount_str}")
+                # 第1行：名称 + 成交额 + 轨道标签
+                lines.append(f"▶ {i}. {result.name}（{result.symbol}）{track_tag}  成交额：{amount_str}")
                 # 第2行：评分 + 现价(涨跌幅)
                 lines.append(f"   评分：{score:.1f}分  现价：{current_price:.2f}元 ({change_str})")
                 # 第3行：命中策略

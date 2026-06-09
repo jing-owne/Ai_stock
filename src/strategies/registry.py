@@ -2,7 +2,7 @@
 策略注册表
 
 所有策略均在此注册，支持独立增删。
-9大策略（v2.6.5）+ 1个综合策略。
+10大策略（v2.6.8）+ 1个综合策略。
 """
 from typing import Dict, Type
 from ..core.types import StrategyType
@@ -16,6 +16,7 @@ from .momentum.turnover_rank import TurnoverRankStrategy
 from .momentum.multi_factor import MultiFactorStrategy
 from .momentum.consecutive_positive import ConsecutivePositiveStrategy
 from .momentum.net_inflow import NetInflowStrategy
+from .momentum.trend_confirmation import TrendConfirmationStrategy
 
 # 技术类
 from .technical.ai_technical import AITechnicalStrategy
@@ -35,7 +36,7 @@ class StrategyRegistry:
         if cls._strategies:
             return
 
-        # ── 9大独立策略 ──
+        # ── 10大独立策略 ──
         cls._strategies[StrategyType.VOLUME_BREAKOUT] = VolumeBreakoutStrategy()
         cls._strategies[StrategyType.TURNOVER_RANK] = TurnoverRankStrategy()
         cls._strategies[StrategyType.MULTI_FACTOR] = MultiFactorStrategy()
@@ -45,6 +46,7 @@ class StrategyRegistry:
         cls._strategies[StrategyType.BOTTOM_REBOUND] = BottomReboundStrategy()
         cls._strategies[StrategyType.CONSECUTIVE_POSITIVE] = ConsecutivePositiveStrategy()
         cls._strategies[StrategyType.NET_INFLOW] = NetInflowStrategy()
+        cls._strategies[StrategyType.TREND_CONFIRMATION] = TrendConfirmationStrategy()
         # 综合策略
         cls._strategies[StrategyType.COMPOSITE] = CompositeStrategy()
 
@@ -87,6 +89,7 @@ class StrategyRegistry:
             StrategyType.MULTI_FACTOR, StrategyType.AI_TECHNICAL,
             StrategyType.BOX_BREAKOUT, StrategyType.MA_TREND,
             StrategyType.BOTTOM_REBOUND, StrategyType.CONSECUTIVE_POSITIVE,
-            StrategyType.NET_INFLOW, StrategyType.COMPOSITE,
+            StrategyType.NET_INFLOW, StrategyType.TREND_CONFIRMATION,
+            StrategyType.COMPOSITE,
         }
         return {k: v for k, v in cls._strategies.items() if k in active_types}
