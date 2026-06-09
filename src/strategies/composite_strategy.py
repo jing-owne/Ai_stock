@@ -393,6 +393,7 @@ class CompositeStrategy(BaseStrategy):
                 elif pos_20 < 30:
                     trap_flags.append("低位")
 
+            vol_bonus = calc_volume_surge_bonus(indicators)
             metadata = {
                 "composite_score": score,
                 "strategy_count": len(strat_map),
@@ -403,7 +404,7 @@ class CompositeStrategy(BaseStrategy):
                 "pullback_confirm": bool(indicators.get("pullback_confirm", False)),
                 "ma_support": calc_ma_support_score(indicators) > 0,
                 "trap_flags": trap_flags,
-                "volume_bonus": round(volume_bonus, 1),  # v2.6.7
+                "volume_bonus": round(vol_bonus, 1),  # v2.6.7
             }
             for sname, result in strat_map.items():
                 metadata[f"{sname}_score"] = result.score
