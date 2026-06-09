@@ -176,11 +176,11 @@ class ReportGenerator:
                 sigs = " / ".join(hit_strategies) + f"（{strategy_count}策略）"
             else:
                 sigs = " / ".join(r.signals[:3]) if r.signals else "-"
-            # 轨道标签(emoji)
+            # 轨道标签(emoji)放在命中策略末尾
             source_track = r.metadata.get("source_track", "")
             track_emoji = f" {source_track}" if source_track else ""
             lines.append(
-                f"| {i} | {r.name}{track_emoji} | `{r.symbol}` | **{r.score:.1f}** | {change_str} | {amt_str} | {sigs} |"
+                f"| {i} | {r.name} | `{r.symbol}` | **{r.score:.1f}** | {change_str} | {amt_str} | {sigs}{track_emoji} |"
             )
         lines.append("")
 

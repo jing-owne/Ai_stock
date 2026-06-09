@@ -122,7 +122,7 @@ class EmailSender:
                 amount_str = f"{amount/1e8:.2f}亿" if amount >= 1e8 else f"{amount/1e4:.0f}万" if amount > 0 else "N/A"
                 sig_str = " / ".join(signals[:3]) if signals else "-"
                 content_lines.append(f"▶ {i}. {name}（{symbol}）  成交额：{amount_str}")
-                content_lines.append(f"   评分：{score:.1f}分  现价：{current_price:.2f}元 ({change_str})")
+                content_lines.append(f"   评分：{score:.1f}分&nbsp;&nbsp;&nbsp;&nbsp;现价：{current_price:.2f}元 ({change_str})")
                 content_lines.append(f"   命中策略：{sig_str}")
                 content_lines.append("")
 
@@ -147,7 +147,7 @@ class EmailSender:
                 sig_str = " / ".join(signals[:3]) if signals else "-"
 
                 content_lines.append(f"▶ {i}. {name}（{symbol}）   预估胜率：<strong style='color:#DC2626;font-weight:bold;'>{win_rate:.1f}%</strong>")
-                content_lines.append(f"   现价：{current_price:.2f}元 ({change_pct:+.2f}%)   建议买入：{suggest_buy_price:.2f}元")
+                content_lines.append(f"   现价：{current_price:.2f}元 ({change_pct:+.2f}%)&nbsp;&nbsp;&nbsp;&nbsp;建议买入：{suggest_buy_price:.2f}元")
                 content_lines.append(f"   止损：{stop_loss:.2f}元（-5%）  止盈：{take_profit:.2f}元（+8%）")
                 content_lines.append(f"   命中策略：{sig_str}")
                 content_lines.append("")
@@ -294,7 +294,7 @@ class EmailSender:
         """
         # 构建邮件主题（新格式）
         date_str = datetime.now().strftime('%Y-%m-%d')
-        subject = f"[Marcus策略小助手] {date_str} 动态策略报告"
+        subject = f"【Marcus策略小助手】{date_str} 动态策略报告"
         
         # 生成完整的邮件内容
         if stock_results:

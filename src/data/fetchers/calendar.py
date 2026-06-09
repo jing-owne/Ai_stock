@@ -161,6 +161,7 @@ def get_bond_calendar(max_days: int = 7) -> List[Dict]:
                 })
             if bond_list:
                 _enrich_bond_ratings(bond_list)
+                bond_list.sort(key=lambda x: x.get('apply_date_full', ''))  # 升序: 最近在前
                 logger.info(f"获取可转债日历(同花顺): 未来{max_days}天共{len(bond_list)}只")
                 return bond_list
     except Exception as e:
@@ -194,6 +195,7 @@ def get_bond_calendar(max_days: int = 7) -> List[Dict]:
                         'source': '东方财富',
                     })
                 if bond_list:
+                    bond_list.sort(key=lambda x: x.get('apply_date_full', ''))  # 升序
                     logger.info(f"获取可转债日历(东财): 未来{max_days}天共{len(bond_list)}只")
                     return bond_list
             break
@@ -233,6 +235,7 @@ def get_bond_calendar(max_days: int = 7) -> List[Dict]:
                     'rating': '待查', 'source': '同花顺IPO',
                 })
             if bond_list:
+                bond_list.sort(key=lambda x: x.get('apply_date_full', ''))  # 升序
                 logger.info(f"获取可转债日历(IPO兜底): 未来{max_days}天共{len(bond_list)}只")
                 return bond_list
     except Exception as e:

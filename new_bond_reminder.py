@@ -233,14 +233,30 @@ def get_future_bonds() -> Tuple[List[Dict], str]:
         bonds = _try_ths()
         if bonds:
             bonds = _enrich_bonds(bonds)
-            bonds.sort(key=lambda b: b.get('apply_date', ''), reverse=True)
+            # 归一化日期格式后升序排序（与新股一致）
+            def _parse_date(d):
+                ds = d.get('apply_date', '')
+                if len(ds) == 8 and ds.isdigit():
+                    return ds  # YYYYMMDD
+                if len(ds) == 10 and ds[4] == '-':
+                    return ds.replace('-', '')  # YYYY-MM-DD → YYYYMMDD
+                return ds
+            bonds.sort(key=_parse_date)
             logger.info(f"未来可申购可转债: {len(bonds)} 只 (同花顺)")
             return bonds, source
 
         bonds = _try_cov()
         if bonds:
             bonds = _enrich_bonds(bonds)
-            bonds.sort(key=lambda b: b.get('apply_date', ''), reverse=True)
+            # 归一化日期格式后升序排序
+            def _parse_date2(d):
+                ds = d.get('apply_date', '')
+                if len(ds) == 8 and ds.isdigit():
+                    return ds
+                if len(ds) == 10 and ds[4] == '-':
+                    return ds.replace('-', '')
+                return ds
+            bonds.sort(key=_parse_date2)
             source = "东方财富 bond_cov_comparison"
             logger.info(f"未来可申购可转债: {len(bonds)} 只 (东财)")
             return bonds, source
@@ -320,6 +336,31 @@ def generate_bond_content(
     lines.append("【每日一言】")
     lines.append("")
     lines.append(f"💡 {fetcher.get_daily_quote()}")
+    lines.append("")
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append("")
+
+    # ── 大盘指数 ──
+    date_str = datetime.now().strftime('%Y-%m-%d %H:%M')
+    lines.append("【大盘指数】")
+    lines.append("")
+    lines.append(f"📅 {date_str}")
+    try:
+        overview = fetcher.get_market_overview()
+        if overview.get('sh_index'):
+            sh = overview['sh_index']
+            arrow = "↑" if sh['change_pct'] >= 0 else "↓"
+            lines.append(f"上证指数 {sh['price']:.1f} {sh['change_pct']:+.2f}% {arrow}")
+        if overview.get('sz_index'):
+            sz = overview['sz_index']
+            arrow = "↑" if sz['change_pct'] >= 0 else "↓"
+            lines.append(f"深证成指 {sz['price']:.1f} {sz['change_pct']:+.2f}% {arrow}")
+        if overview.get('cyb_index'):
+            cyb = overview['cyb_index']
+            arrow = "↑" if cyb['change_pct'] >= 0 else "↓"
+            lines.append(f"创业板指 {cyb['price']:.1f} {cyb['change_pct']:+.2f}% {arrow}")
+    except Exception:
+        lines.append("大盘指数获取失败")
     lines.append("")
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append("")
@@ -484,7 +525,8 @@ def send_bond_email(
     )
 
     # 复用电邮模板 → HTML
-    subject = "新债打新提醒"
+    date_str = datetime.now().strftime('%Y-%m-%d')
+    subject = f"【Marcus策略小助手】{date_str} 新债上新申购提醒"
     html_content = format_email_html_responsive(text_content, subject)
 
     # 保存预览

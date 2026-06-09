@@ -30,25 +30,35 @@ from typing import Dict, Optional, List
 
 TITLE_GRADIENT_MAP: Dict[str, str] = {
     '每日一言': 'linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%)',
+    '大盘指数': 'linear-gradient(135deg, #FEE2E2 0%, #FECACA 100%)',
     '财经动态': 'linear-gradient(135deg, #DBEAFE 0%, #BFDBFE 100%)',
     '策略配置': 'linear-gradient(135deg, #D1FAE5 0%, #A7F3D0 100%)',
     '标的池': 'linear-gradient(135deg, #EEF2FF 0%, #E0E7FF 100%)',
     '操作建议': 'linear-gradient(135deg, #FCE7F3 0%, #FBCFE8 100%)',
     '今日总结': 'linear-gradient(135deg, #E0E7FF 0%, #C7D2FE 100%)',
+    '今日可申购新债': 'linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%)',
+    '未来可申购可转债': 'linear-gradient(135deg, #DBEAFE 0%, #BFDBFE 100%)',
+    '已获批可转债动态': 'linear-gradient(135deg, #D1FAE5 0%, #A7F3D0 100%)',
+    '打新债小贴士': 'linear-gradient(135deg, #FCE7F3 0%, #FBCFE8 100%)',
 }
 
 BORDER_COLOR_MAP: Dict[str, str] = {
     '每日一言': '#F59E0B',
+    '大盘指数': '#DC2626',
     '财经动态': '#3B82F6',
     '策略配置': '#10B981',
-    '建议操作-胜率排行Top5': '#EC4899',
+    '建议操作-胜率排行Top10': '#EC4899',
     '策略命中TOP15': '#4F46E5',
     '今日总结': '#6366F1',
     '风险&提示': '#EF4444',
+    '今日可申购新债': '#F59E0B',
+    '未来可申购可转债': '#3B82F6',
+    '已获批可转债动态': '#10B981',
+    '打新债小贴士': '#EC4899',
 }
 
 # 表格头检测关键词
-TABLE_HEADER_KEYWORDS = ('标的', '代码', '名称', '评分', '评级', '转债', '申购', '状态')
+TABLE_HEADER_KEYWORDS = ('标的', '代码', '名称', '评分', '评级', '转债', '申购', '状态', '债券', '正股', '申购日期')
 
 
 # ══════════════════════════════════════════════════════════════
@@ -190,7 +200,7 @@ def _render_body(content: str, variant: str = "responsive") -> str:
             text = line[1:].strip()
             html_parts.append(
                 f'<div style="margin: 8px 0; padding: 10px 14px; background: #F8FAFC; '
-                f'border-radius: 6px; border: 1px solid #E2E8F0;">💡 {text}</div>'
+                f'border-radius: 6px; border: 1px solid #E2E8F0;">{text}</div>'
             )
             continue
 
@@ -269,8 +279,8 @@ def _cell_style(col_index: int, cell_text: str) -> str:
 
 
 def _looks_like_score(text: str) -> bool:
-    """判断是否是评分格式（如 85.3）"""
-    clean = text.replace('.', '').replace('-', '')
+    """判断是否是评分格式（如 85.3、**85.3**）"""
+    clean = text.replace('.', '').replace('-', '').replace('*', '').replace('_', '').strip()
     return clean.isdigit() and '.' in text
 
 

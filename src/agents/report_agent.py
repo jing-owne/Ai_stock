@@ -118,6 +118,30 @@ class ReportAgent:
         lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         lines.append("")
 
+        # ── 大盘指数 ──────────────────────────────────
+        lines.append("【大盘指数】")
+        lines.append("")
+        try:
+            overview = fetcher.get_market_overview()
+            if overview.get('sh_index'):
+                sh = overview['sh_index']
+                arrow = "↑" if sh['change_pct'] >= 0 else "↓"
+                lines.append(f"上证指数 {sh['price']:.1f} {sh['change_pct']:+.2f}% {arrow}")
+            if overview.get('sz_index'):
+                sz = overview['sz_index']
+                arrow = "↑" if sz['change_pct'] >= 0 else "↓"
+                lines.append(f"深证成指 {sz['price']:.1f} {sz['change_pct']:+.2f}% {arrow}")
+            if overview.get('cyb_index'):
+                cyb = overview['cyb_index']
+                arrow = "↑" if cyb['change_pct'] >= 0 else "↓"
+                lines.append(f"创业板指 {cyb['price']:.1f} {cyb['change_pct']:+.2f}% {arrow}")
+        except Exception as e:
+            self.logger.warning(f"获取大盘指数失败: {e}")
+            lines.append("大盘指数获取失败")
+        lines.append("")
+        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        lines.append("")
+
         # ── 财经动态 ──────────────────────────────────
         lines.append("【财经动态】")
         lines.append("")
@@ -208,16 +232,16 @@ class ReportAgent:
                 else:
                     strategy_str = " / ".join(result.signals[:3]) if result.signals else "-"
 
-                # 第1行：名称 + 预估胜率 + 轨道标签(emoji)在末尾
+                # 第1行：名称 + 预估胜率
                 source_track = result.metadata.get("source_track", "")
-                track_tag = f"{source_track}" if source_track else ""
-                lines.append(f"▶ {i}. {result.name}（{result.symbol}）   预估胜率：<strong style='color:#DC2626;font-weight:bold;'>{win_rate:.1f}%</strong>{track_tag}")
+                track_tag = f"{source_track} " if source_track else ""
+                lines.append(f"▶ {i}. {result.name}（{result.symbol}）   预估胜率：<strong style='color:#DC2626;font-weight:bold;'>{win_rate:.1f}%</strong>")
                 # 第2行：现价 + 建议买入价
-                lines.append(f"   现价：{current_price:.2f}元 ({change_str})   建议买入：{suggest_buy_price:.2f}元")
+                lines.append(f"   现价：{current_price:.2f}元 ({change_str})&nbsp;&nbsp;&nbsp;&nbsp;建议买入：{suggest_buy_price:.2f}元")
                 # 第3行：止盈止损
                 lines.append(f"   止损：{stop_loss:.2f}元（-5%）  止盈：{take_profit:.2f}元（+8%）")
-                # 第4行：命中策略
-                lines.append(f"   命中策略：{strategy_str}")
+                # 第4行：命中策略 + 轨道标签
+                lines.append(f"   命中策略：{track_tag}{strategy_str}")
                 lines.append("")
 
         lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -231,14 +255,15 @@ class ReportAgent:
             lines.append("今日暂无策略命中标的。")
         else:
             for i, r in enumerate(results[:15], 1):
+                current_price = r.data.close if r.data else 0
                 change_pct = r.data.change_pct if r.data else 0
                 amount = r.data.amount if r.data else 0
                 change_str = f"{change_pct:+.2f}%"
                 amount_str = f"{amount/1e8:.2f}亿" if amount >= 1e8 else f"{amount/1e4:.0f}万" if amount > 0 else "N/A"
 
-                # 轨道标签放在最前
+                # 轨道标签放在命中策略行
                 source_track = r.metadata.get("source_track", "")
-                track_prefix = f"{source_track} " if source_track else ""
+                track_tag = f"{source_track} " if source_track else ""
 
                 hit_strategies = r.metadata.get("hit_strategies", [])
                 strategy_count = r.metadata.get("strategy_count", 0)
@@ -247,8 +272,12 @@ class ReportAgent:
                 else:
                     strategy_str = " / ".join(r.signals[:3]) if r.signals else "-"
 
-                lines.append(f"▶ {i}. {track_prefix}{r.name}（{r.symbol}）  {r.score:.1f}分 | {change_str} | {amount_str}")
-                lines.append(f"   命中策略：{strategy_str}")
+                # 第1行：名称 + 成交额
+                lines.append(f"▶ {i}. {r.name}（{r.symbol}）  成交额：{amount_str}")
+                # 第2行：评分 + 现价(涨跌幅)
+                lines.append(f"   评分：<strong style='color:#E87722;font-weight:700;'>{r.score:.1f}分</strong>&nbsp;&nbsp;&nbsp;&nbsp;现价：{current_price:.2f}元 ({change_str})")
+                # 第3行：命中策略 + 轨道标签
+                lines.append(f"   命中策略：{track_tag}{strategy_str}")
                 lines.append("")
 
         lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -353,8 +382,8 @@ class ReportAgent:
         # ── 可转债日历 ──
         bond_list = fetcher.get_bond_calendar(max_days=7)
         if bond_list:
-            # 按申购日期降序：日期最新的在最上面
-            bond_list.sort(key=lambda x: x.get('apply_date_full', x.get('apply_date', '')), reverse=True)
+            # 按申购日期升序：日期最新的在最上面（与新股一致）
+            bond_list.sort(key=lambda x: x.get('apply_date_full', x.get('apply_date', '')))
             lines.append(f"📋 近期可转债申购（未来7天）：")
             for bond in bond_list:
                 conv_price = bond.get('conv_price', '待定')
