@@ -250,7 +250,7 @@ class CompositeStrategy(BaseStrategy):
 
     def _prefetch_kline_and_indicators(self, market_data: List[StockData]) -> None:
         """预获取K线数据并计算技术指标（并发，所有策略共享）"""
-        symbols = list({s.symbol for s in market_data if s.change_pct > 0 and s.amount >= 100_000_000})
+        symbols = list({s.symbol for s in market_data if s.amount >= 100_000_000})
         self.logger.info(f"预获取 {len(symbols)} 只K线...")
 
         self._kline_cache = self._kline_fetcher.fetch_batch(symbols, days=60)

@@ -76,7 +76,7 @@ class BaseStrategy(ABC):
     def filter_by_change(
         self,
         stocks: List[StockData],
-        min_change: float = 0
+        min_change: float = -5.0
     ) -> List[StockData]:
         """按涨跌幅筛选"""
         return [s for s in stocks if s.change_pct >= min_change]

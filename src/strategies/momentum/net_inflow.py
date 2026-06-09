@@ -38,7 +38,7 @@ class NetInflowStrategy(BaseStrategy):
         params: Dict[str, Any]
     ) -> List[ScanResult]:
         cfg = params.get("net_inflow", {}) if params else {}
-        min_change = cfg.get("min_price_change", 0.5)
+        min_change = cfg.get("min_price_change", -5.0)
         max_change = cfg.get("max_price_change", 7.0)
         min_amount = cfg.get("min_amount", 100_000_000)
         min_score = cfg.get("min_score", 1)  # 最低1分就能上榜

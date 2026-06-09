@@ -37,7 +37,7 @@ class BoxBreakoutStrategy(BaseStrategy):
         max_box_range = cfg.get("max_box_range", 18.0)
         min_box_range = cfg.get("min_box_range", 3.0)
         min_breakout_pct = cfg.get("min_breakout_pct", -1.0)
-        min_change = cfg.get("min_price_change", 2.0)
+        min_change = cfg.get("min_price_change", -5.0)
         max_change = cfg.get("max_price_change", 7.0)
         min_amount = cfg.get("min_amount", 100_000_000)
         min_score = cfg.get("min_score", 40)

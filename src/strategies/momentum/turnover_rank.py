@@ -53,7 +53,7 @@ class TurnoverRankStrategy(BaseStrategy):
                 signals.append("成交额TOP5" + sfx)
             elif rank <= 10:
                 signals.append("成交活跃" + sfx)
-            if stock.change_pct > 0:
+            if stock.change_pct > -5.0:
                 signals.append("资金活跃" + sfx)
 
             results.append(ScanResult(

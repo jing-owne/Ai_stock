@@ -46,7 +46,7 @@ class MATrendStrategy(BaseStrategy):
         cfg = params.get("ma_trend", {}) if params else {}
         max_convergence = cfg.get("max_convergence", 5.0)
         min_convergence_days = cfg.get("min_convergence_days", 3)
-        min_change = cfg.get("min_price_change", 1.0)
+        min_change = cfg.get("min_price_change", -5.0)
         max_change = cfg.get("max_price_change", 7.0)
         min_amount = cfg.get("min_amount", 100_000_000)
         min_score = cfg.get("min_score", 35)

@@ -86,7 +86,7 @@ class MultiFactorStrategy(BaseStrategy):
             elif 5.0 < stock.turn_rate <= 8.0:
                 institution_bonus += 5
             # 温和涨幅 = 机构建仓特征
-            if 0.5 <= stock.change_pct <= 4.0:
+            if -5.0 <= stock.change_pct <= 7.0:
                 institution_bonus += 8
             elif 4.0 < stock.change_pct <= 7.0:
                 institution_bonus += 5

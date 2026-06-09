@@ -91,51 +91,51 @@ def calc_anti_trap_penalty(
     pos_20 = indicators.get("position_20d", 50)
     consecutive_up = indicators.get("consecutive_up", 0)
     is_low = pos_20 < 40
-    is_high = pos_20 > 70
+    is_high = pos_20 > 80
 
-    if consecutive_up >= 4:
-        extra_days = consecutive_up - 3
+    if consecutive_up >= 6:
+        extra_days = consecutive_up - 5
         if is_high:
-            p = min(extra_days * 6, 25)
+            p = min(extra_days * 5, 25)
         elif is_low:
             p = min(extra_days * 2, 8)
         else:
-            p = min(extra_days * 4, 16)
+            p = min(extra_days * 3, 16)
         penalty += p
 
     dist_high = indicators.get("dist_from_20d_high", 100)
     if dist_high is not None and dist_high < 2.0 and change_pct > 3:
-        penalty += 15
+        penalty += 10
 
-    if turn_rate > 8 and change_pct > 5:
+    if turn_rate > 8 and change_pct > 7:
         if is_high:
-            penalty += 20
+            penalty += 15
         elif is_low:
             penalty += 5
         else:
             penalty += 10
 
-    if change_pct > 7:
-        penalty += 15
+    if change_pct > 9:
+        penalty += 10
 
     avg_amp = indicators.get("avg_amplitude_5d", 3)
-    if pos_20 > 85 and avg_amp > 6:
-        penalty += 15
+    if pos_20 > 95 and avg_amp > 8:
+        penalty += 10
 
     close_pos = indicators.get("close_position_today", 50)
     if close_pos < 30 and change_pct > 1:
         penalty += 10
 
     vol_ratio = indicators.get("volume_ratio", 1.0)
-    if consecutive_up >= 3 and vol_ratio > 3.0:
+    if consecutive_up >= 5 and vol_ratio > 3.0:
         if is_high:
-            penalty += 15
+            penalty += 10
         elif is_low:
             pass
         else:
             penalty += 5
 
-    return round(min(penalty, 50), 1)
+    return round(min(penalty, 40), 1)
 
 
 def calc_low_absorb_score(indicators: Dict[str, float]) -> float:

@@ -42,12 +42,12 @@ class VolumeBreakoutStrategy(BaseStrategy):
     ) -> List[ScanResult]:
         cfg = params.get("volume_breakout", {}) or params or {}
         min_volume_ratio = cfg.get("min_volume_ratio", 1.3)
-        min_change = cfg.get("min_price_change", 1.0)
-        max_change = cfg.get("max_price_change", 8.0)
+        min_change = cfg.get("min_price_change", -5.0)
+        max_change = cfg.get("max_price_change", 7.0)
         min_amount = cfg.get("min_amount", 100_000_000)
-        max_consecutive_up = cfg.get("max_consecutive_up", 3)
-        max_position_20d = cfg.get("max_position_20d", 85)
-        max_amplitude = cfg.get("max_amplitude", 8.0)
+        max_consecutive_up = cfg.get("max_consecutive_up", 5)
+        max_position_20d = cfg.get("max_position_20d", 95)
+        max_amplitude = cfg.get("max_amplitude", 12.0)
 
         results = []
         max_amount = max((s.amount for s in market_data), default=1)
@@ -114,7 +114,7 @@ class VolumeBreakoutStrategy(BaseStrategy):
                 signals.append("低位启动" + sfx)
             if stock.change_pct > max_change and pos_20d < 50:
                 signals.append("低位涨停突破" + sfx)
-            if stock.change_pct >= 5.0:
+            if stock.change_pct >= 7.0:
                 signals.append("强势上涨" + sfx)
 
             results.append(ScanResult(
