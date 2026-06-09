@@ -101,6 +101,7 @@ class ReportGenerator:
                 "bottom_rebound": "底部反弹",
                 "consecutive_positive": "连续小阳",
                 "net_inflow": "资金净流入",
+                "trend_confirmation": "追涨确认",
                 # 向后兼容旧名称
                 "volume_surge": "放量突破",
                 "institution": "多因子增强",
@@ -123,6 +124,7 @@ class ReportGenerator:
                 "bottom_rebound": ("🔄 底部反弹策略", "筛选条件：RSI超卖反弹/底部形态、放量确认"),
                 "consecutive_positive": ("🌱 连续小阳吸筹策略", "筛选条件：3-7天连续小阳线、温和放量"),
                 "net_inflow": ("💵 资金净流入策略", "筛选条件：20日连续净流入>10天、量价配合"),
+                "trend_confirmation": ("✅ 追涨确认策略", "筛选条件：RSI>55 + MA多头 + 放量 + 连涨≥3天"),
             }
             lines += ["## 二、各子策略 Top 15 明细", ""]
 
@@ -154,7 +156,7 @@ class ReportGenerator:
         lines += [
             "## 三、当日策略命中 Top 15",
             "",
-            "综合9大策略加权评分后，Top 15 策略标的：",
+            "综合10大策略加权评分后，Top 15 策略标的：",
             "",
             "| 排名 | 名称 | 代码 | 综合评分 | 涨幅 | 成交额 | 命中策略 |",
             "|:---:|:---|:---|:---:|:---:|:---:|:---|",
@@ -174,8 +176,11 @@ class ReportGenerator:
                 sigs = " / ".join(hit_strategies) + f"（{strategy_count}策略）"
             else:
                 sigs = " / ".join(r.signals[:3]) if r.signals else "-"
+            # 轨道标签(emoji)
+            source_track = r.metadata.get("source_track", "")
+            track_emoji = f" {source_track}" if source_track else ""
             lines.append(
-                f"| {i} | {r.name} | `{r.symbol}` | **{r.score:.1f}** | {change_str} | {amt_str} | {sigs} |"
+                f"| {i} | {r.name}{track_emoji} | `{r.symbol}` | **{r.score:.1f}** | {change_str} | {amt_str} | {sigs} |"
             )
         lines.append("")
 

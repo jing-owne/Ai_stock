@@ -2,7 +2,7 @@
 综合策略 (Composite Strategy) v2.6.8
 
 整合10大独立量化策略，按动态权重分配综合评分。
-选股采用双轨制：底部反弹(5只) + 放量突破(5只) = Top10
+选股结果标记轨道标签（底部反弹📈 / 放量突破🚀），不改变Top15数量。
 
 架构:
 - composite_strategy.py: 编排层（K线预取、指标共享、权重计算、双轨制选股）
@@ -431,7 +431,7 @@ class CompositeStrategy(BaseStrategy):
         return results
 
     # ═══════════════════════════════════════════════════════════════
-    # 双轨制Top10: 底部反弹(5) + 放量突破(5) (v2.6.8)
+    # 轨道标签: 底部反弹/放量突破 (v2.6.8 — 仅打标，不截断)
     # ═══════════════════════════════════════════════════════════════
 
     def _apply_dual_track(
@@ -439,62 +439,32 @@ class CompositeStrategy(BaseStrategy):
         results: List[ScanResult],
         sub_results: Dict[str, Dict[str, ScanResult]]
     ) -> List[ScanResult]:
-        """
-        双轨制选股: 底部反弹独立Top5 + 放量突破独立Top5 → Top10
-        去重规则: 若同一标的两个轨道都命中，保留底部反弹标签，放量突破补位
-        """
-        # ── 轨道1: 底部反弹 Top5 ──
-        bottom_rebound_candidates = []
-        for symbol, strategies in sub_results.items():
-            if "bottom_rebound" in strategies:
-                br = strategies["bottom_rebound"]
-                bottom_rebound_candidates.append((symbol, br.score))
-        bottom_rebound_candidates.sort(key=lambda x: -x[1])
-        br_top5 = {s: ("底部反弹", sc) for s, sc in bottom_rebound_candidates[:5]}
+        """为综合评分结果打轨道标签（底部反弹📈 / 放量突破🚀），不影响数量"""
+        br_count = 0
+        vb_count = 0
+        for r in results:
+            symbol = r.symbol
+            strategies = sub_results.get(symbol, {})
+            has_br = "bottom_rebound" in strategies
+            has_vb = "volume_breakout" in strategies
 
-        # ── 轨道2: 放量突破 Top5 ──
-        volume_breakout_candidates = []
-        for symbol, strategies in sub_results.items():
-            if "volume_breakout" in strategies:
-                vb = strategies["volume_breakout"]
-                volume_breakout_candidates.append((symbol, vb.score))
-        volume_breakout_candidates.sort(key=lambda x: -x[1])
-        vb_top5 = {s: ("放量突破", sc) for s, sc in volume_breakout_candidates[:5]}
+            if has_br and has_vb:
+                r.metadata["source_track"] = "🚀📈"
+                br_count += 1
+                vb_count += 1
+            elif has_br:
+                r.metadata["source_track"] = "📈"
+                br_count += 1
+            elif has_vb:
+                r.metadata["source_track"] = "🚀"
+                vb_count += 1
+
+            if has_br:
+                r.metadata["bottom_rebound_score"] = round(strategies["bottom_rebound"].score, 1)
+            if has_vb:
+                r.metadata["volume_breakout_score"] = round(strategies["volume_breakout"].score, 1)
 
         self.logger.info(
-            f"双轨制选股: 底部反弹={len(br_top5)}只, 放量突破={len(vb_top5)}只"
+            f"轨道打标完成: 📈底部反弹={br_count}只, 🚀放量突破={vb_count}只"
         )
-
-        # ── 合并去重 ──
-        track_map = {}
-        used = set()
-
-        for symbol, (track, score) in br_top5.items():
-            track_map[symbol] = (track, score)
-            used.add(symbol)
-
-        for symbol, (track, score) in vb_top5.items():
-            if symbol not in used:
-                track_map[symbol] = (track, score)
-                used.add(symbol)
-            else:
-                # 重叠: 从放量突破候选中补位1只
-                for alt_symbol, alt_score in volume_breakout_candidates:
-                    if alt_symbol not in used:
-                        track_map[alt_symbol] = ("放量突破", alt_score)
-                        used.add(alt_symbol)
-                        break
-                self.logger.info(f"双轨重叠: {symbol} 已补位")
-
-        # ── 应用标签 ──
-        result_map = {r.symbol: r for r in results}
-        tagged_results = []
-        for symbol, (track_name, track_score) in track_map.items():
-            if symbol in result_map:
-                r = result_map[symbol]
-                r.metadata["source_track"] = track_name
-                r.metadata["track_raw_score"] = round(track_score, 1)
-                tagged_results.append(r)
-
-        tagged_results.sort(key=lambda x: x.score, reverse=True)
-        return tagged_results
+        return results  # 保持全部结果，不截断
