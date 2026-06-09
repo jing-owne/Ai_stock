@@ -76,7 +76,7 @@ def get_ipo_calendar(max_days: int = 7) -> List[Dict]:
             })
 
         # 按申购日期排序：最新在前
-        ipo_list.sort(key=lambda x: x['apply_date'], reverse=True)
+        ipo_list.sort(key=lambda x: x['apply_date'])  # 升序：最近的申购日在前
 
         logger.info(f"获取打新日历: 未来{max_days}天共{len(ipo_list)}只新股可申购")
         return ipo_list
