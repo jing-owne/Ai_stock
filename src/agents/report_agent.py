@@ -118,29 +118,29 @@ class ReportAgent:
         lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         lines.append("")
 
-        # ── 大盘指数 ──────────────────────────────────
-        lines.append("【大盘指数】")
-        lines.append("")
-        try:
-            overview = fetcher.get_market_overview()
-            if overview.get('sh_index'):
-                sh = overview['sh_index']
-                arrow = "↑" if sh['change_pct'] >= 0 else "↓"
-                lines.append(f"上证指数 {sh['price']:.1f} {sh['change_pct']:+.2f}% {arrow}")
-            if overview.get('sz_index'):
-                sz = overview['sz_index']
-                arrow = "↑" if sz['change_pct'] >= 0 else "↓"
-                lines.append(f"深证成指 {sz['price']:.1f} {sz['change_pct']:+.2f}% {arrow}")
-            if overview.get('cyb_index'):
-                cyb = overview['cyb_index']
-                arrow = "↑" if cyb['change_pct'] >= 0 else "↓"
-                lines.append(f"创业板指 {cyb['price']:.1f} {cyb['change_pct']:+.2f}% {arrow}")
-        except Exception as e:
-            self.logger.warning(f"获取大盘指数失败: {e}")
-            lines.append("大盘指数获取失败")
-        lines.append("")
-        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        lines.append("")
+        # ── 大盘指数（暂时禁用，保留获取模块） ──────────
+        # lines.append("【大盘指数】")
+        # lines.append("")
+        # try:
+        #     overview = fetcher.get_market_overview()
+        #     if overview.get('sh_index'):
+        #         sh = overview['sh_index']
+        #         arrow = "↑" if sh['change_pct'] >= 0 else "↓"
+        #         lines.append(f"上证指数 {sh['price']:.1f} {sh['change_pct']:+.2f}% {arrow}")
+        #     if overview.get('sz_index'):
+        #         sz = overview['sz_index']
+        #         arrow = "↑" if sz['change_pct'] >= 0 else "↓"
+        #         lines.append(f"深证成指 {sz['price']:.1f} {sz['change_pct']:+.2f}% {arrow}")
+        #     if overview.get('cyb_index'):
+        #         cyb = overview['cyb_index']
+        #         arrow = "↑" if cyb['change_pct'] >= 0 else "↓"
+        #         lines.append(f"创业板指 {cyb['price']:.1f} {cyb['change_pct']:+.2f}% {arrow}")
+        # except Exception as e:
+        #     self.logger.warning(f"获取大盘指数失败: {e}")
+        #     lines.append("大盘指数获取失败")
+        # lines.append("")
+        # lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        # lines.append("")
 
         # ── 财经动态 ──────────────────────────────────
         lines.append("【财经动态】")
