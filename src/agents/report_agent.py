@@ -340,11 +340,10 @@ class ReportAgent:
         # ── 打新日历（新股） ──
         ipo_list = fetcher.get_ipo_calendar(max_days=7)
         if ipo_list:
-            # 按申购日期降序：日期最新的在最上面
-            ipo_list.sort(key=lambda x: x.get('apply_date', ''), reverse=True)
             lines.append(f"📋 近期新股申购（未来7天）：")
             for ipo in ipo_list:
-                lines.append(f"  • {ipo['apply_date']}  {ipo['stock_name']}（{ipo['stock_code']}）申购代码：{ipo['apply_code']} | 发行价：{ipo['price']}")
+                date_display = ipo.get('apply_date_display', ipo['apply_date'][5:])
+                lines.append(f"  • {date_display}  {ipo['stock_name']}（{ipo['stock_code']}）申购代码：{ipo['apply_code']} | 发行价：{ipo['price']}")
         else:
             lines.append("📋 近7天暂无新股申购安排")
         lines.append("")

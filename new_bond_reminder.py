@@ -147,11 +147,11 @@ def get_new_bonds_today() -> List[Dict]:
                 continue
             if parsed_date != today:
                 continue
-            stock_name = str(row.get('标的简称', ''))
+            stock_name = str(row.get('股票简称', row.get('标的简称', '')))
             if not any(kw in stock_name for kw in ['转债', 'EB', '可转债', '可交债', '交换债']):
                 continue
             bonds.append({
-                'bond_code': str(row.get('代码', '')),
+                'bond_code': str(row.get('股票代码', row.get('代码', ''))),
                 'bond_name': stock_name,
                 'apply_code': str(row.get('申购代码', '')),
                 'apply_date': today.strftime('%m-%d'),

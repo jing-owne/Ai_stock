@@ -5,6 +5,41 @@ from typing import List, Dict
 logger = logging.getLogger("AInvest.CalendarFetcher")
 
 
+def _parse_apply_date(apply_date_str: str, today):
+    """解析申购日期，统一返回 (parsed_date, display_str)"""
+    from datetime import datetime
+    apply_date_str = apply_date_str.strip()
+    if not apply_date_str or apply_date_str in ('-', 'nan', ''):
+        return None, ''
+
+    # 格式1: "2026-06-09" (完整日期)
+    if apply_date_str.count('-') >= 2 and '周' not in apply_date_str:
+        try:
+            parsed_date = datetime.strptime(apply_date_str[:10], "%Y-%m-%d").date()
+            return parsed_date, parsed_date.strftime('%m-%d')
+        except (ValueError, IndexError):
+            pass
+
+    # 格式2: "06-15 周一" (含星期)
+    if '-' in apply_date_str and '周' in apply_date_str:
+        try:
+            date_part = apply_date_str.split(' ')[0]
+            parsed_date = datetime.strptime(f"{today.year}-{date_part}", "%Y-%m-%d").date()
+            return parsed_date, date_part
+        except (ValueError, IndexError):
+            pass
+
+    # 格式3: 纯 "06-15" (月-日)
+    if '-' in apply_date_str:
+        try:
+            parsed_date = datetime.strptime(f"{today.year}-{apply_date_str}", "%Y-%m-%d").date()
+            return parsed_date, apply_date_str
+        except (ValueError, IndexError):
+            pass
+
+    return None, ''
+
+
 def get_ipo_calendar(max_days: int = 7) -> List[Dict]:
     try:
         import akshare as ak
@@ -17,22 +52,21 @@ def get_ipo_calendar(max_days: int = 7) -> List[Dict]:
         ipo_list = []
         for _, row in df.iterrows():
             apply_date_str = str(row.get('申购日期', ''))
-            if not apply_date_str or apply_date_str in ('-', 'nan'):
-                continue
-            try:
-                if '-' in apply_date_str and '周' in apply_date_str:
-                    date_part = apply_date_str.split(' ')[0]
-                    parsed_date = datetime.strptime(f"{today.year}-{date_part}", "%Y-%m-%d").date()
-                else:
-                    parsed_date = datetime.strptime(apply_date_str[:10], "%Y-%m-%d").date()
-            except (ValueError, IndexError):
+            parsed_date, display_date = _parse_apply_date(apply_date_str, today)
+            if parsed_date is None:
                 continue
             if parsed_date < today or parsed_date > cutoff:
                 continue
+
+            # 兼容新旧akshare列名：新API用「股票代码/股票简称」，旧API用「代码/标的简称」
+            stock_code = str(row.get('股票代码', row.get('代码', '')))
+            stock_name = str(row.get('股票简称', row.get('标的简称', '')))
+
             ipo_list.append({
-                'stock_code': str(row.get('代码', '')),
-                'stock_name': str(row.get('标的简称', '')),
-                'apply_date': apply_date_str.split(' ')[0] if ' ' in apply_date_str else apply_date_str[:10],
+                'stock_code': stock_code,
+                'stock_name': stock_name,
+                'apply_date': parsed_date.strftime('%Y-%m-%d'),  # 完整日期用于排序
+                'apply_date_display': display_date,               # MM-DD 用于展示
                 'apply_code': str(row.get('申购代码', '')),
                 'price': _safe_str(row, '发行价格', '待定'),
                 'pe': _safe_str(row, '发行市盈率', '待定'),
@@ -40,6 +74,10 @@ def get_ipo_calendar(max_days: int = 7) -> List[Dict]:
                 'max_shares': _safe_str(row, '申购上限（万股）', '-'),
                 'market_cap_needed': _safe_str(row, '顶格申购需配市值（万元）', '-'),
             })
+
+        # 按申购日期排序：最新在前
+        ipo_list.sort(key=lambda x: x['apply_date'], reverse=True)
+
         logger.info(f"获取打新日历: 未来{max_days}天共{len(ipo_list)}只新股可申购")
         return ipo_list
     except ImportError:
@@ -172,7 +210,7 @@ def get_bond_calendar(max_days: int = 7) -> List[Dict]:
                 apply_date_str = str(row.get('申购日期', ''))
                 if not apply_date_str or apply_date_str in ('-', 'nan', ''):
                     continue
-                name = str(row.get('标的简称', ''))
+                name = str(row.get('股票简称', row.get('标的简称', '')))
                 if '转债' not in name and 'EB' not in name:
                     continue
                 try:
@@ -187,7 +225,7 @@ def get_bond_calendar(max_days: int = 7) -> List[Dict]:
                     continue
                 bond_list.append({
                     'bond_name': name,
-                    'bond_code': str(row.get('代码', '')),
+                    'bond_code': str(row.get('股票代码', row.get('代码', ''))),
                     'stock_name': name.replace('转债', '').replace('EB', ''),
                     'apply_date': parsed_date.strftime('%m-%d'),
                     'apply_date_full': parsed_date.strftime('%Y-%m-%d'),
