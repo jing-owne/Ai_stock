@@ -1,13 +1,11 @@
 """
-连续小阳吸筹策略 (v2.6.5新增)
+连续小阳吸筹策略 (v2.6.7放宽)
 
 核心逻辑：
-- 检测连续3-7天小阳线（每日涨幅0.5%-3%）
-- 累计涨幅2%-15%，显示主力缓慢吸筹
+- 检测连续3-10天小阳线（每日涨幅0.5%-5%）
+- 累计涨幅2%-25%，覆盖30天上涨50%的标的
 - 成交量温和放大配合
 - 位置不过高（不是出货）
-
-典型场景：主力悄悄建仓，每日控制涨幅不引起市场注意
 """
 from typing import List, Dict, Any
 import logging
@@ -38,10 +36,10 @@ class ConsecutivePositiveStrategy(BaseStrategy):
     ) -> List[ScanResult]:
         cfg = params.get("consecutive_positive", {}) if params else {}
         min_days = cfg.get("min_consecutive_days", 3)
-        max_days = cfg.get("max_consecutive_days", 7)
-        max_daily = cfg.get("max_daily_change", 3.0)
+        max_days = cfg.get("max_consecutive_days", 10)  # was 7
+        max_daily = cfg.get("max_daily_change", 5.0)  # was 3.0
         min_cumulative = cfg.get("min_cumulative_change", 2.0)
-        max_cumulative = cfg.get("max_cumulative_change", 15.0)
+        max_cumulative = cfg.get("max_cumulative_change", 25.0)  # was 15.0, 允许30天上涨50%
         min_amount = cfg.get("min_amount", 100_000_000)
         min_score = cfg.get("min_score", 40)
 
@@ -105,7 +103,7 @@ class ConsecutivePositiveStrategy(BaseStrategy):
             elif pos_20 < 20:
                 score += 10  # 低位也不错
             elif pos_20 > 80:
-                score -= 15  # 高位减分
+                score -= 5  # was -15, 大幅放宽
 
             # 技术面加分
             if indicators.get("ma_bullish_align"):

@@ -21,7 +21,8 @@ from .base import BaseStrategy
 from ..core.types import StockData, ScanResult, StrategyType
 from ..core.indicators import (
     calc_all_indicators, calc_position_score, calc_anti_trap_penalty,
-    calc_low_absorb_score, calc_pullback_confirm_score, calc_ma_support_score
+    calc_low_absorb_score, calc_pullback_confirm_score, calc_ma_support_score,
+    calc_volume_surge_bonus
 )
 from ..data.kline_fetcher import KlineFetcher
 from ..data.money_flow_fetcher import MoneyFlowFetcher
@@ -330,9 +331,13 @@ class CompositeStrategy(BaseStrategy):
             count = len(strategies)
             diversity_bonus = count * 1.5
 
+            # 连续放量加分（v2.6.7新增：核心成交量信号）
+            volume_bonus = calc_volume_surge_bonus(indicators)
+
             total = round(
                 strategy_total + position_score + low_absorb_score +
-                pullback_bonus + ma_support_bonus + diversity_bonus - anti_trap, 2
+                pullback_bonus + ma_support_bonus + diversity_bonus +
+                volume_bonus - anti_trap, 2
             )
             scores[symbol] = total
 
@@ -394,9 +399,11 @@ class CompositeStrategy(BaseStrategy):
                 "hit_strategies": hit_strategies,
                 "position_20d": round(indicators.get("position_20d", 50), 1),
                 "consecutive_up": int(indicators.get("consecutive_up", 0)),
+                "consecutive_volume_up": int(indicators.get("consecutive_volume_up", 0)),  # v2.6.7
                 "pullback_confirm": bool(indicators.get("pullback_confirm", False)),
                 "ma_support": calc_ma_support_score(indicators) > 0,
                 "trap_flags": trap_flags,
+                "volume_bonus": round(volume_bonus, 1),  # v2.6.7
             }
             for sname, result in strat_map.items():
                 metadata[f"{sname}_score"] = result.score

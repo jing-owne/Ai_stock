@@ -45,9 +45,9 @@ class VolumeBreakoutStrategy(BaseStrategy):
         min_change = cfg.get("min_price_change", -5.0)
         max_change = cfg.get("max_price_change", 7.0)
         min_amount = cfg.get("min_amount", 100_000_000)
-        max_consecutive_up = cfg.get("max_consecutive_up", 5)
-        max_position_20d = cfg.get("max_position_20d", 95)
-        max_amplitude = cfg.get("max_amplitude", 12.0)
+        max_consecutive_up = cfg.get("max_consecutive_up", 10)  # was 5
+        max_position_20d = cfg.get("max_position_20d", 99)  # was 95
+        max_amplitude = cfg.get("max_amplitude", 15.0)  # was 12.0
 
         results = []
         max_amount = max((s.amount for s in market_data), default=1)

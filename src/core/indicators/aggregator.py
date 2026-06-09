@@ -89,6 +89,21 @@ def calc_all_indicators(
     result["consecutive_up"] = consecutive_up
     result["consecutive_down"] = consecutive_down
 
+    # 连续放量天数（v2.6.7新增）
+    # 统计连续N日成交量超过前5日均量的天数，预判潜在上涨
+    consecutive_volume_up = 0
+    if n >= 11:  # 需要至少10天量能历史
+        for i in range(n - 1, max(n - 11, 0), -1):
+            start_idx = max(0, i - 5)
+            if start_idx >= i:
+                break
+            vol_ma5 = float(np.mean(volume[start_idx:i]))
+            if vol_ma5 > 0 and volume[i] > vol_ma5 * 1.05:  # 超5日均量5%
+                consecutive_volume_up += 1
+            else:
+                break
+    result["consecutive_volume_up"] = consecutive_volume_up
+
     # 收盘在日内K线的位置
     if high is not None and low is not None and n > 0:
         today_high = float(high[-1])

@@ -36,8 +36,8 @@ def calc_box_breakout_score(indicators: Dict[str, float]) -> float:
     pos_20 = indicators.get("position_20d", 50)
     if pos_20 < 60:
         score += 15
-    elif pos_20 >= 95:
-        score -= 10
+    elif pos_20 >= 99:  # was 95
+        score -= 5  # was 10
     if indicators.get("macd_golden_cross"):
         score += 15
     rsi = indicators.get("rsi14")
@@ -80,8 +80,8 @@ def calc_ma_divergence_score(indicators: Dict[str, float]) -> float:
         score += 15
     elif pos_20 < 70:
         score += 5
-    elif pos_20 >= 95:
-        score -= 10
+    elif pos_20 >= 99:  # was 95
+        score -= 5  # was 10
     consecutive_up = indicators.get("consecutive_up", 0)
     if 2 <= consecutive_up <= 3:
         score += 5

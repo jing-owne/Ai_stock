@@ -15,6 +15,7 @@ from .aggregator import calc_all_indicators
 from .scores_basic import (
     calc_technical_score, calc_pattern_score, calc_trend_score,
     calc_position_score, calc_anti_trap_penalty, calc_low_absorb_score,
+    calc_volume_surge_bonus,
 )
 from .scores_strategy import (
     calc_box_breakout_score, calc_ma_divergence_score,
@@ -32,6 +33,7 @@ __all__ = [
     # 基础评分
     "calc_technical_score", "calc_pattern_score", "calc_trend_score",
     "calc_position_score", "calc_anti_trap_penalty", "calc_low_absorb_score",
+    "calc_volume_surge_bonus",
     # 策略评分
     "calc_box_breakout_score", "calc_ma_divergence_score",
     "calc_pullback_confirm_score", "calc_ma_support_score",
