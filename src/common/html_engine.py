@@ -30,7 +30,6 @@ from typing import Dict, Optional, List
 
 TITLE_GRADIENT_MAP: Dict[str, str] = {
     '每日一言': 'linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%)',
-    '大盘指数': 'linear-gradient(135deg, #FEE2E2 0%, #FECACA 100%)',
     '财经动态': 'linear-gradient(135deg, #DBEAFE 0%, #BFDBFE 100%)',
     '策略配置': 'linear-gradient(135deg, #D1FAE5 0%, #A7F3D0 100%)',
     '标的池': 'linear-gradient(135deg, #EEF2FF 0%, #E0E7FF 100%)',
@@ -44,7 +43,6 @@ TITLE_GRADIENT_MAP: Dict[str, str] = {
 
 BORDER_COLOR_MAP: Dict[str, str] = {
     '每日一言': '#F59E0B',
-    '大盘指数': '#DC2626',
     '财经动态': '#3B82F6',
     '策略配置': '#10B981',
     '建议操作-胜率排行Top10': '#EC4899',
@@ -100,7 +98,7 @@ def _render_body(content: str, variant: str = "responsive") -> str:
     for line in lines:
         line = line.strip()
 
-        # 保护已有 HTML 标签不被 escape
+        # 保护已有 HTML 标签和 HTML 实体不被 escape
         saved_tags: List[str] = []
 
         def _save(m: re.Match) -> str:
@@ -108,6 +106,8 @@ def _render_body(content: str, variant: str = "responsive") -> str:
             return f'\x00TAG{len(saved_tags) - 1}\x00'
 
         line = re.sub(r'<[^>]+>', _save, line)
+        # 保护 &nbsp; 等HTML实体不被 escape
+        line = re.sub(r'&[a-z]+;', _save, line)
         line = html_mod.escape(line)
         for idx, tag in enumerate(saved_tags):
             line = line.replace(f'\x00TAG{idx}\x00', tag)
@@ -147,6 +147,15 @@ def _render_body(content: str, variant: str = "responsive") -> str:
                 html_parts.append('</ul>')
                 in_list = False
             title_text = line.strip('【】')
+
+            # 大盘指数不渲染为独立section卡片，作为内联普通文本
+            if title_text == '大盘指数':
+                html_parts.append(
+                    f'<p style="margin: 8px 0; line-height: 1.6; color: #475569; font-size: 14px;">'
+                    f'<span style="color: #DC2626; font-weight: 600;">{title_text}</span></p>'
+                )
+                continue
+
             bg = TITLE_GRADIENT_MAP.get(title_text, 'linear-gradient(135deg, #EEF2FF 0%, #E0E7FF 100%)')
             border = BORDER_COLOR_MAP.get(title_text, '#4F46E5')
             html_parts.append(
