@@ -414,7 +414,7 @@ def generate_report(symbol: str, name: str, start: str, end: str,
 
 def main():
     parser = argparse.ArgumentParser(description='单股全策略逐日回测工具')
-    parser.add_argument("--symbol", required=True, help="股票代码（6位数字）")
+    parser.add_argument("--symbol", required=True, help="标的代码（6位数字）")
     parser.add_argument("--start", required=True, help="起始日期 YYYY-MM-DD")
     parser.add_argument("--end", required=True, help="结束日期 YYYY-MM-DD")
     args = parser.parse_args()

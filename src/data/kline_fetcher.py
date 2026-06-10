@@ -25,7 +25,12 @@ logger = logging.getLogger("AInvest.KlineFetcher")
 
 
 class KlineFetcher:
-    """K线数据获取器（双源 fallback：东财 → 新浪）"""
+    """K线数据获取器（可配置数据源）"""
+
+    # TDX通道常量
+    SOURCE_TDX = "tdx"
+    SOURCE_EASTMONEY = "eastmoney"
+    SOURCE_SINA = "sina"
 
     EASTMONEY_KLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
     SINA_KLINE_URL = "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData"
@@ -35,23 +40,33 @@ class KlineFetcher:
         "Referer": "https://quote.eastmoney.com/",
     }
 
-    def __init__(self, max_workers: int = 1, timeout: int = 15, delay_per_request: float = 0.02):
+    def __init__(self, max_workers: int = 1, timeout: int = 15, delay_per_request: float = 0.02,
+                 source: str = None):
+        """
+        Args:
+            source: 数据源，可选 "tdx" / "eastmoney" / None(自动)
+        """
         self.max_workers = max_workers
         self.timeout = timeout
         self.delay_per_request = delay_per_request
+        self.source = source
         self._cache: Dict[str, List[StockData]] = {}
         self._cache_time: Dict[str, float] = {}
         self._cache_ttl = 300
-        self._eastmoney_available: Optional[bool] = None  # None=未测试, True=可用, False=不可用
+        self._eastmoney_available: Optional[bool] = None
+        self._tdx_available: Optional[bool] = None
 
     def fetch_one(self, symbol: str, days: int = 60) -> Optional[List[StockData]]:
         """
         获取单只标的K线数据
 
-        Fallback: 东财 → 新浪 → None
+        Fallback 根据 source 配置:
+        - source="tdx": 只用TDX
+        - source="eastmoney": 东财
+        - source=None: 自动选择
 
         Args:
-            symbol: 纯数字代码 (如 "600519")
+            symbol: 纯数字代码
             days: 获取最近多少天
 
         Returns:
@@ -63,6 +78,64 @@ class KlineFetcher:
         if cache_key in self._cache and (now - self._cache_time.get(cache_key, 0)) < self._cache_ttl:
             return self._cache[cache_key]
 
+        # 根据 source 选择数据源
+        if self.source == self.SOURCE_TDX:
+            return self._fetch_with_tdx(symbol, days, cache_key, now)
+        elif self.source == self.SOURCE_EASTMONEY:
+            return self._fetch_with_eastmoney(symbol, days, cache_key, now)
+        else:
+            # 自动模式：优先TDX，失败则东财→新浪
+            result = self._fetch_with_tdx(symbol, days, cache_key, now)
+            if result:
+                return result
+            return self._fetch_with_eastmoney(symbol, days, cache_key, now)
+
+    def _fetch_with_tdx(self, symbol: str, days: int,
+                        cache_key: str, now: float) -> Optional[List[StockData]]:
+        """使用TDX通道获取K线"""
+        try:
+            from .tdx_fetcher import get_tdx_fetcher
+            tdx = get_tdx_fetcher()
+            if tdx is None:
+                logger.debug(f"[{symbol}] TDX客户端未初始化")
+                return None
+
+            kline_list = tdx.get_kline(symbol, offset=days)
+            if not kline_list:
+                return None
+
+            # 转换为StockData
+            stock_list = []
+            for k in kline_list:
+                try:
+                    stock_list.append(StockData(
+                        symbol=symbol,
+                        name='',  # TDX不返回标的名称
+                        date=k.get('date', ''),
+                        open=float(k.get('open', 0)),
+                        close=float(k.get('close', 0)),
+                        high=float(k.get('high', 0)),
+                        low=float(k.get('low', 0)),
+                        volume=float(k.get('volume', 0)),
+                        amount=float(k.get('amount', 0)),
+                    ))
+                except (ValueError, TypeError) as e:
+                    logger.debug(f"K线数据转换失败: {e}, 数据: {k}")
+                    continue
+
+            if stock_list:
+                self._cache[cache_key] = stock_list
+                self._cache_time[cache_key] = now
+                logger.debug(f"[{symbol}] TDX K线获取成功: {len(stock_list)}条")
+                return stock_list
+            return None
+        except Exception as e:
+            logger.debug(f"[{symbol}] TDX K线获取失败: {e}")
+            return None
+
+    def _fetch_with_eastmoney(self, symbol: str, days: int,
+                              cache_key: str, now: float) -> Optional[List[StockData]]:
+        """使用东财获取K线"""
         # 首次调用时检测东财是否可用
         if self._eastmoney_available is None:
             self._eastmoney_available = self._test_eastmoney()

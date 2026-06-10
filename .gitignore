@@ -71,3 +71,6 @@ preview_*.html
 
 # Sensitive configuration (contains SMTP passwords and API keys)
 configs/settings.yaml
+
+# Strategy configuration (contains symbol info)
+strategy_config.json
