@@ -62,6 +62,7 @@ Thumbs.db
 
 # Project specific
 output/
+cache/
 *.log
 preview_*.html
 
@@ -70,3 +71,6 @@ preview_*.html
 
 # Sensitive configuration (contains SMTP passwords and API keys)
 configs/settings.yaml
+
+# AI constraints (local only, do not upload)
+AI_CONSTRAINTS.md

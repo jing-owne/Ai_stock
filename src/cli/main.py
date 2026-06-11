@@ -1,5 +1,5 @@
 """
-Marcus 策略小助手 (AInvest) 命令行工具
+Marcus策略小助手 命令行工具 · 公共模块重构
 """
 import sys
 import argparse
@@ -129,7 +129,7 @@ def cmd_health(args):
     
     health = engine.health_check()
     
-    print("\n系统健康状态:")
+    print("\n策略小助手健康状态:")
     print("-" * 40)
     for key, value in health.items():
         if isinstance(value, dict):
@@ -168,7 +168,7 @@ def cmd_backtest(args):
 def create_parser() -> argparse.ArgumentParser:
     """创建命令行解析器"""
     parser = argparse.ArgumentParser(
-        description="Marcus策略小助手(AInvest) - AI驱动的量化策略选股平台",
+        description="Marcus策略小助手 - AI驱动的量化策略分析平台 · 可转债打新提醒",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     
@@ -187,12 +187,12 @@ def create_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", help="子命令")
     
     # scan命令
-    scan_parser = subparsers.add_parser("scan", help="执行股票扫描")
+    scan_parser = subparsers.add_parser("scan", help="执行标的扫描")
     scan_parser.add_argument(
         "-s", "--strategy",
         default="volume_surge",
-        choices=["volume_surge", "turnover_rank", "multi_factor", "ai_technical", "institution", "composite"],
-        help="选股策略"
+        choices=["volume_surge", "turnover_rank", "multi_factor", "ai_technical", "institution", "box_breakout", "ma_divergence", "rsi_oversold", "new_high_break", "consecutive_positive", "composite"],
+        help="策略类型"
     )
     scan_parser.add_argument("-l", "--limit", type=int, default=15, help="返回结果数量")
     scan_parser.add_argument("--report", action="store_true", help="生成报告")
@@ -218,7 +218,7 @@ def create_parser() -> argparse.ArgumentParser:
     list_parser.set_defaults(func=cmd_list)
     
     # health命令
-    health_parser = subparsers.add_parser("health", help="系统健康检查")
+    health_parser = subparsers.add_parser("health", help="策略小助手健康检查")
     health_parser.set_defaults(func=cmd_health)
     
     # backtest命令

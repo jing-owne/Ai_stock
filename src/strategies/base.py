@@ -41,7 +41,7 @@ class BaseStrategy(ABC):
             params: 策略参数
             
         Returns:
-            符合条件的股票列表
+            符合条件的标的列表
         """
         pass
     
@@ -51,10 +51,10 @@ class BaseStrategy(ABC):
         factors: Dict[str, float]
     ) -> float:
         """
-        计算股票评分
+        计算标的评分
         
         Args:
-            stock: 股票数据
+            stock: 标的数据
             factors: 各因子评分
             
         Returns:
@@ -76,7 +76,7 @@ class BaseStrategy(ABC):
     def filter_by_change(
         self,
         stocks: List[StockData],
-        min_change: float = 0
+        min_change: float = -5.0
     ) -> List[StockData]:
         """按涨跌幅筛选"""
         return [s for s in stocks if s.change_pct >= min_change]

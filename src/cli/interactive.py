@@ -17,7 +17,7 @@ class InteractiveCLI:
     
     COMMANDS = {
         "help": "显示帮助信息",
-        "scan": "执行股票扫描",
+        "scan": "执行标的扫描",
         "market": "分析市场",
         "list": "列出策略",
         "report": "生成报告",
@@ -110,7 +110,7 @@ class InteractiveCLI:
         print(f"\n正在执行 {strategy_type.value} 策略扫描...")
         results = self.engine.scan(strategy_type, limit=limit)
         
-        print(f"\n找到 {len(results)} 只符合条件的股票:")
+        print(f"\n找到 {len(results)} 只符合条件的标的:")
         for i, r in enumerate(results, 1):
             print(f"  {i}. {r.name}({r.symbol}) - 评分: {r.score:.1f}")
     
@@ -132,7 +132,7 @@ class InteractiveCLI:
     def cmd_health(self):
         """健康检查"""
         health = self.engine.health_check()
-        print(f"\n系统状态: {health['status']}")
+        print(f"\n策略小助手状态: {health['status']}")
         print(f"版本: {health['version']}")
     
     def cmd_report(self, args):

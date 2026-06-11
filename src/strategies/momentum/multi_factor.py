@@ -1,34 +1,33 @@
 """
-多因子量化策略
-综合考虑多个因子进行选股，技术因子使用真实技术指标
+多因子增强策略 (v2.6.5 合并版)
+
+= multi_factor + institution 合并
+
+整合逻辑:
+1. 基础多因子: 成交量25% + 价格25% + 换手率15% + 技术面35%
+2. 机构特征增强: 大额成交加分 + 机构型换手率加分 + 温和涨幅加分
+3. 技术面增强: MACD金叉/均线多头=机构建仓确认
 """
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 import logging
 
 from ..base import BaseStrategy
 from ...core.types import StockData, ScanResult, StrategyType
-from ...core.indicators import calc_all_indicators, calc_technical_score
-from ...data.kline_fetcher import KlineFetcher
+from ...core.indicators import calc_technical_score
 
 
 class MultiFactorStrategy(BaseStrategy):
-    """
-    多因子量化策略
+    """多因子增强策略 = 多因子 + 机构特征"""
 
-    综合评分因子:
-    - 成交量因子（真实）
-    - 价格因子（真实）
-    - 换手率因子（真实）
-    - 技术面因子（真实技术指标）
-    """
-
-    def __init__(self, kline_fetcher: Optional[KlineFetcher] = None):
-        self._kline_fetcher = kline_fetcher or KlineFetcher(max_workers=10)
-        self.logger = logging.getLogger("AInvest.MultiFactorStrategy")
+    def __init__(self):
+        super().__init__()
+        self.logger = logging.getLogger("AInvest.MultiFactor")
+        self._indicators: Dict[str, Dict[str, float]] = {}
+        self._kline_available: bool = True
 
     @property
     def name(self) -> str:
-        return "多因子量化策略"
+        return "多因子增强"
 
     @property
     def strategy_type(self) -> StrategyType:
@@ -39,76 +38,92 @@ class MultiFactorStrategy(BaseStrategy):
         market_data: List[StockData],
         params: Dict[str, Any]
     ) -> List[ScanResult]:
-        volume_weight = params.get("volume_weight", 0.20)
-        price_weight = params.get("price_weight", 0.25)
-        turnover_weight = params.get("turnover_weight", 0.20)
-        tech_weight = params.get("tech_weight", 0.35)
-        min_score = params.get("min_score", 60)
-
-        # 批量获取K线数据
-        symbols = [s.symbol for s in market_data if s.amount >= 50_000_000]
-        kline_data = self._kline_fetcher.fetch_batch(symbols, days=60)
-
-        # 计算技术指标
-        indicator_map = {}
-        for symbol, kline_list in kline_data.items():
-            arrays = self._kline_fetcher.get_numpy_arrays(kline_list)
-            if arrays:
-                indicator_map[symbol] = calc_all_indicators(
-                    arrays["close"], arrays["volume"],
-                    arrays["high"], arrays["low"]
-                )
+        cfg = params.get("multi_factor", {}) if params else {}
+        v_weight = cfg.get("volume_weight", 0.25)
+        p_weight = cfg.get("price_weight", 0.25)
+        t_weight = cfg.get("turnover_weight", 0.15)
+        tech_weight = cfg.get("tech_weight", 0.35)
+        min_score = cfg.get("min_score", 40)
+        min_amount = cfg.get("min_amount", 200_000_000)
 
         max_amount = max((s.amount for s in market_data), default=1)
-        max_change = max((s.change_pct for s in market_data), default=1) or 1
+        max_change = max((abs(s.change_pct) for s in market_data), default=1) or 1
 
         results = []
         for stock in market_data:
-            factors = {}
+            if stock.amount < min_amount:
+                continue
 
-            factors["volume"] = (stock.amount / max_amount) * 100
-            factors["price"] = max(0, min(stock.change_pct / max_change * 100 if max_change > 0 else 50, 100))
-            factors["turnover"] = min(stock.turn_rate * 10, 100)
-
-            # 真实技术面因子
-            indicators = indicator_map.get(stock.symbol)
+            indicators = self._indicators.get(stock.symbol)
             if indicators:
-                factors["technical"] = calc_technical_score(indicators)
+                technical = calc_technical_score(indicators)
             else:
-                factors["technical"] = 40.0  # 无数据给保守分
+                technical = 40.0
 
-            total_score = (
-                factors["volume"] * volume_weight +
-                factors["price"] * price_weight +
-                factors["turnover"] * turnover_weight +
+            # ── 基础多因子 ──
+            factors = {
+                "volume": (stock.amount / max_amount) * 100,
+                "price": max(0, min(stock.change_pct / max_change * 100, 100)),
+                "turnover": min(stock.turn_rate * 10, 100),
+                "technical": technical,
+            }
+            base_score = (
+                factors["volume"] * v_weight +
+                factors["price"] * p_weight +
+                factors["turnover"] * t_weight +
                 factors["technical"] * tech_weight
             )
 
-            if total_score >= min_score:
-                signals = self._generate_signals(factors)
-                results.append(ScanResult(
-                    symbol=stock.symbol,
-                    name=stock.name,
-                    strategy=self.strategy_type,
-                    score=round(total_score, 1),
-                    signals=signals,
-                    data=stock,
-                    metadata={"factors": {k: round(v, 1) for k, v in factors.items()}}
-                ))
+            # ── 机构特征增强 (原 institution 逻辑) ──
+            institution_bonus = 0
+            # 大额成交 = 大资金可能参与
+            institution_bonus += min(stock.amount / max_amount * 15, 15)
+            # 机构型换手率 1%-5%
+            if 1.0 <= stock.turn_rate <= 5.0:
+                institution_bonus += 10
+            elif 0.5 <= stock.turn_rate < 1.0:
+                institution_bonus += 8
+            elif 5.0 < stock.turn_rate <= 8.0:
+                institution_bonus += 5
+            # 温和涨幅 = 机构建仓特征
+            if -5.0 <= stock.change_pct <= 7.0:
+                institution_bonus += 8
+            elif 4.0 < stock.change_pct <= 7.0:
+                institution_bonus += 5
+            # 技术面确认
+            if indicators:
+                if indicators.get("macd_golden_cross"):
+                    institution_bonus += 5
+                if indicators.get("ma_bullish_align"):
+                    institution_bonus += 3
+
+            total = round(base_score + institution_bonus, 1)
+            if total < min_score:
+                continue
+
+            signals = []
+            sfx = "「多因子」"
+            if factors["volume"] >= 80:
+                signals.append("量能充沛" + sfx)
+            if factors["price"] >= 80:
+                signals.append("涨幅领先" + sfx)
+            if technical >= 70:
+                signals.append("技术面强势" + sfx)
+            if institution_bonus >= 15:
+                signals.append("机构特征明显" + sfx)
+
+            results.append(ScanResult(
+                symbol=stock.symbol,
+                name=stock.name,
+                strategy=StrategyType.MULTI_FACTOR,
+                score=total,
+                signals=signals,
+                data=stock,
+                metadata={
+                    "factors": {k: round(v, 1) for k, v in factors.items()},
+                    "institution_bonus": round(institution_bonus, 1),
+                }
+            ))
 
         results.sort(key=lambda x: x.score, reverse=True)
         return results
-
-    def _generate_signals(self, factors: Dict[str, float]) -> List[str]:
-        signals = []
-        if factors["volume"] >= 80:
-            signals.append("量能充沛")
-        elif factors["volume"] >= 60:
-            signals.append("量能较好")
-        if factors["price"] >= 80:
-            signals.append("涨幅领先")
-        if factors["turnover"] >= 80:
-            signals.append("换手活跃")
-        if factors["technical"] >= 70:
-            signals.append("技术面强势")
-        return signals

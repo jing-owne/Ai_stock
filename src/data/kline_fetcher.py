@@ -2,7 +2,7 @@
 K线数据并发获取模块
 
 设计目标:
-- 并发获取多只股票的K线数据，用于技术指标计算
+- 并发获取多只标的的K线数据，用于技术指标计算
 - 10线程并发: 200只约6秒, 500只约15秒
 - 支持批量获取 + 结果缓存
 """
@@ -35,7 +35,7 @@ class KlineFetcher:
         "Referer": "https://quote.eastmoney.com/",
     }
 
-    def __init__(self, max_workers: int = 1, timeout: int = 15, delay_per_request: float = 0.3):
+    def __init__(self, max_workers: int = 1, timeout: int = 15, delay_per_request: float = 0.02):
         self.max_workers = max_workers
         self.timeout = timeout
         self.delay_per_request = delay_per_request
@@ -46,12 +46,12 @@ class KlineFetcher:
 
     def fetch_one(self, symbol: str, days: int = 60) -> Optional[List[StockData]]:
         """
-        获取单只股票K线数据
+        获取单只标的K线数据
 
         Fallback: 东财 → 新浪 → None
 
         Args:
-            symbol: 纯数字股票代码 (如 "600519")
+            symbol: 纯数字代码 (如 "600519")
             days: 获取最近多少天
 
         Returns:
@@ -96,7 +96,7 @@ class KlineFetcher:
                 self.EASTMONEY_KLINE_URL,
                 params={"secid": "1.600519", "fields1": "f1", "fields2": "f51",
                         "klt": "101", "fqt": "1", "beg": "0", "end": "20500101"},
-                timeout=5, verify=False,
+                timeout=2, verify=False,
             )
             session.close()
             data = resp.json()
@@ -240,17 +240,17 @@ class KlineFetcher:
         days: int = 60,
     ) -> Dict[str, List[StockData]]:
         """
-        获取多只股票的K线数据
+        获取多只标的的K线数据
 
         默认串行 + 延迟，防东财限频。max_workers>1 时用线程池并发。
-        已缓存的股票会直接复用，不会重新请求。
+        已缓存的标的会直接复用，不会重新请求。
 
         Args:
-            symbols: 股票代码列表
+            symbols: 代码列表
             days: 每只获取天数
 
         Returns:
-            {symbol: [StockData]} 成功获取的股票
+            {symbol: [StockData]} 成功获取的标的
         """
         results: Dict[str, List[StockData]] = {}
         total = len(symbols)
@@ -270,7 +270,7 @@ class KlineFetcher:
 
         if need_fetch:
             logger.info(
-                f"开始获取 {len(need_fetch)}/{total} 只股票K线数据 "
+                f"开始获取 {len(need_fetch)}/{total} 只标的K线数据 "
                 f"(缓存命中 {len(results)}, 并发={self.max_workers}, 延迟={self.delay_per_request}s)..."
             )
             start_time = time.time()
@@ -343,7 +343,7 @@ class KlineFetcher:
 
     @staticmethod
     def _make_secid(symbol: str) -> str:
-        """股票代码 -> 东财 secid"""
+        """代码 -> 东财 secid"""
         if symbol.startswith("6"):
             return f"1.{symbol}"
         else:

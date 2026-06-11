@@ -59,6 +59,27 @@ class StrategyConfig:
         "min_inst_count": 3,          # 最少机构数
         "min_inst_ratio": 0.05,      # 最少机构持股比例
     })
+
+    # 箱体突破策略
+    box_breakout: Dict[str, Any] = field(default_factory=lambda: {
+        "max_box_range": 18.0,
+        "min_box_range": 3.0,
+        "min_breakout_pct": -1.0,
+        "min_price_change": 2.0,
+        "max_price_change": 7.0,
+        "min_amount": 100_000_000,
+        "min_score": 40,
+    })
+
+    # 均线多头发散策略
+    ma_divergence: Dict[str, Any] = field(default_factory=lambda: {
+        "max_convergence": 5.0,
+        "min_convergence_days": 3,
+        "min_price_change": 1.0,
+        "max_price_change": 7.0,
+        "min_amount": 100_000_000,
+        "min_score": 35,
+    })
     
     # 综合策略权重配置（整合5大策略）
     composite_strategy: Dict[str, Any] = field(default_factory=lambda: {
@@ -86,7 +107,7 @@ class ReportConfig:
     template: str = "default"       # 模板名称
     include_charts: bool = True     # 包含图表
     output_dir: str = "./output"    # 输出目录
-    max_stocks: int = 50           # 最大股票数
+    max_stocks: int = 50           # 最大标的数
 
 
 @dataclass
@@ -95,7 +116,7 @@ class EmailConfig:
     enabled: bool = True           # 启用邮件发送
     debug_mode: bool = False       # 调试模式（只发邮件不抄送）
     skip_money_flow: bool = True   # 跳过耗时资金流向查询
-    sender_name: str = "Marcus策略师"  # 发件人名称
+    sender_name: str = "Marcus策略小助手"  # 发件人名称
     smtp_server: str = "smtp.qq.com"  # QQ邮箱SMTP服务器
     smtp_port: int = 465           # SSL端口
     smtp_user: str = ""             # 发送邮箱
@@ -106,12 +127,27 @@ class EmailConfig:
 
 
 @dataclass
+class BondEmailConfig:
+    """新债打新提醒邮件配置（独立于策略邮件池）"""
+    enabled: bool = True
+    debug_mode: bool = False       # 调试模式（只发邮件不抄送）
+    sender_name: str = "Marcus策略小助手"
+    smtp_server: str = "smtp.qq.com"
+    smtp_port: int = 465
+    smtp_user: str = ""
+    smtp_password: str = ""
+    to_emails: list = field(default_factory=list)
+    cc_emails: list = field(default_factory=list)
+
+
+@dataclass
 class Config:
     """统一配置类"""
     data_source: DataSourceConfig = field(default_factory=DataSourceConfig)
     strategy: StrategyConfig = field(default_factory=StrategyConfig)
     report: ReportConfig = field(default_factory=ReportConfig)
     email: EmailConfig = field(default_factory=EmailConfig)
+    bond_email: BondEmailConfig = field(default_factory=BondEmailConfig)
     
     # 全局设置
     log_level: str = "INFO"          # 日志级别
@@ -154,6 +190,11 @@ class Config:
             for key, value in data["email"].items():
                 if hasattr(config.email, key):
                     setattr(config.email, key, value)
+        
+        if "bond_email" in data:
+            for key, value in data["bond_email"].items():
+                if hasattr(config.bond_email, key):
+                    setattr(config.bond_email, key, value)
         
         # 全局设置
         if "log_level" in data:

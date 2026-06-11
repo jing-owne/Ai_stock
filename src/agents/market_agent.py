@@ -35,7 +35,7 @@ class MarketAgent:
         分析市场状态
         
         Args:
-            market_data: 市场股票数据
+            market_data: 市场标的数据
             
         Returns:
             MarketAnalysis市场分析报告
@@ -178,7 +178,7 @@ class MarketAgent:
         
         # 情绪建议
         if sentiment == "乐观":
-            recommendations.append("市场情绪较好，可适当增配股票仓位")
+            recommendations.append("市场情绪较好，可适当增配标的仓位")
             recommendations.append("关注突破新高的强势股")
         elif sentiment == "悲观":
             recommendations.append("建议控制仓位，谨慎操作")
@@ -208,7 +208,7 @@ class MarketAgent:
         total = rising + falling
         
         return (
-            f"今日市场{sentiment}，涨跌股票比{rising}:{falling}。"
+            f"今日市场{sentiment}，涨跌标的比{rising}:{falling}。"
             f"市场风险{risk_level}等级。"
             f"建议投资者密切关注热点板块轮动，控制仓位风险。"
         )
