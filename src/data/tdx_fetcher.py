@@ -37,14 +37,14 @@ class TdxFetcher:
             self._connected = False
             return False
     
-    def get_kline(self, symbol: str, frequency: int = 8,
+    def get_kline(self, symbol: str, frequency: int = 4,
                   offset: int = 60, start: int = 0) -> Optional[List[Dict]]:
         """
         获取K线数据
         
         Args:
             symbol: 标的代码（如 000001, 600001）
-            frequency: 周期 8=日线, 9=周线
+            frequency: 周期 4=日线, 8=分钟线, 9=周线, 10=月线
             offset: 获取条数
             start: 起始位置
             
