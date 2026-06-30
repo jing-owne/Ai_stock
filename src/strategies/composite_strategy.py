@@ -307,9 +307,31 @@ class CompositeStrategy(BaseStrategy):
         """综合评分: 策略共识分 + 位置/低吸/回调/均线/防套/多样性"""
         scores = {}
         for symbol, strategies in sub_results.items():
-            # 策略共识分
+            # ── v2.6.9: 追涨+底部反弹互斥权重 ──────────────────────────
+            # 判断该标的处于哪种趋势状态
+            has_trend_confirm = "trend_confirmation" in strategies
+            has_bottom_rebound = "bottom_rebound" in strategies
+            # 连续下跌: consecutive_down >= 3 → 底部反弹优先，追涨归零
+            indicators = self._indicator_cache.get(symbol, {})
+            consecutive_down = indicators.get("consecutive_down", 0)
+            consecutive_up = indicators.get("consecutive_up", 0)
+            in_downtrend = consecutive_down >= 3
+            in_uptrend = consecutive_up >= 3
+
+            effective_strategies = dict(strategies)
+            if has_trend_confirm and has_bottom_rebound:
+                if in_downtrend:
+                    # 连续下跌中触发了追涨 → 追涨权重归零，保留底部
+                    effective_strategies.pop("trend_confirmation", None)
+                elif in_uptrend:
+                    # 连续上涨中触发了底部反弹 → 底部反弹权重归零，保留追涨
+                    effective_strategies.pop("bottom_rebound", None)
+                # else: 趋势不明确，两者都保留（不做互斥干预）
+            # ─────────────────────────────────────────────────────────
+
+            # 策略共识分（使用过滤后的策略字典）
             strategy_total = 0.0
-            for sname, result in strategies.items():
+            for sname, result in effective_strategies.items():
                 w = weights.get(sname, 0.0)
                 strategy_total += min(result.score, 100) * w
 
@@ -371,11 +393,31 @@ class CompositeStrategy(BaseStrategy):
             score = stock_scores[symbol]
             strat_map = sub_results.get(symbol, {})
 
+            # ── v2.6.9: 在结果生成时独立计算 effective_strategies（互斥过滤）──
+            indicators = self._indicator_cache.get(symbol, {})
+            consecutive_down = indicators.get("consecutive_down", 0)
+            consecutive_up = indicators.get("consecutive_up", 0)
+            has_trend_confirm = "trend_confirmation" in strat_map
+            has_bottom_rebound = "bottom_rebound" in strat_map
+            in_uptrend = consecutive_up >= 3
+            in_downtrend = consecutive_down >= 3
+            effective_strategies = dict(strat_map)
+            suppressed_signal = ""
+            if has_trend_confirm and has_bottom_rebound:
+                if in_downtrend:
+                    effective_strategies.pop("trend_confirmation", None)
+                    suppressed_signal = "底部反弹(互斥被抑制)"
+                elif in_uptrend:
+                    effective_strategies.pop("bottom_rebound", None)
+                    suppressed_signal = "追涨确认(互斥被抑制)"
             all_signals = []
             hit_strategies = []
-            for sname, result in strat_map.items():
+            for sname, result in effective_strategies.items():
                 all_signals.extend(result.signals)
                 hit_strategies.append(self.STRATEGY_NAMES.get(sname, sname))
+            if suppressed_signal:
+                all_signals.append(suppressed_signal)
+            # ──────────────────────────────────────────────────────────────────────
 
             strategy_signal = "+".join(hit_strategies)
 

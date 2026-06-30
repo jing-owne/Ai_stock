@@ -301,6 +301,7 @@ class DataAgent:
                 amount=amount_yuan,
                 change_pct=round(pct, 2),
                 turn_rate=round(float(parts[38]) if parts[38] else 0, 2),
+                pe_ratio=float(parts[39]) if len(parts) > 39 and parts[39] else None,
             )
         except (ValueError, IndexError):
             return None

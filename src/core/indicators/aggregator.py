@@ -181,10 +181,18 @@ def calc_all_indicators(
             result["dist_to_60d_high"] = float((close[-1] - high_60d) / high_60d * 100)
 
     # 累计涨幅
+    if n >= 4:
+        price_3d_ago = float(close[-4]) if n >= 4 else float(close[0])
+        if price_3d_ago > 0:
+            result["cumulative_change_3d"] = float((close[-1] - price_3d_ago) / price_3d_ago * 100)
     if n >= 5:
         price_5d_ago = float(close[-6]) if n >= 6 else float(close[0])
         if price_5d_ago > 0:
             result["cumulative_change_5d"] = float((close[-1] - price_5d_ago) / price_5d_ago * 100)
+    if n >= 8:
+        price_7d_ago = float(close[-8]) if n >= 8 else float(close[0])
+        if price_7d_ago > 0:
+            result["cumulative_change_7d"] = float((close[-1] - price_7d_ago) / price_7d_ago * 100)
     if n >= 10:
         price_10d_ago = float(close[-11]) if n >= 11 else float(close[0])
         if price_10d_ago > 0:
@@ -269,5 +277,26 @@ def calc_all_indicators(
         sma5_now = float(np.mean(close[-5:]))
         sma5_3d_ago = float(np.mean(close[-8:-3]))
         result["ma5_turning_up"] = sma5_now > sma5_3d_ago
+
+
+    # ── v2.6.9 新增: RSI动量强度 ─────────────────────────────────
+    # RSI动量 = RSI今日值 - RSI N日前值（反映RSI从低位回升的强度）
+    if n >= 35:  # 至少需要21天计算RSI动量
+        rsi_arr_full = calc_rsi(close, 14)
+        rsi_today = rsi_arr_full[-1]
+        rsi_5d_ago = rsi_arr_full[-6] if n >= 6 and not np.isnan(rsi_arr_full[-6]) else None
+        rsi_10d_ago = rsi_arr_full[-11] if n >= 11 and not np.isnan(rsi_arr_full[-11]) else None
+        if not np.isnan(rsi_today):
+            result["rsi_momentum_5d"] = float(rsi_today - rsi_5d_ago) if rsi_5d_ago is not None and not np.isnan(rsi_5d_ago) else 0.0
+            result["rsi_momentum_10d"] = float(rsi_today - rsi_10d_ago) if rsi_10d_ago is not None and not np.isnan(rsi_10d_ago) else 0.0
+            # RSI由弱转强: 5日RSI动量>0 说明短期强势在积累
+            result["rsi_strengthening"] = result["rsi_momentum_5d"] > 0
+
+    # ── v2.6.9 新增: 30日累计涨幅 ─────────────────────────────────
+    if n >= 31:
+        price_30d_ago = float(close[-31])
+        if price_30d_ago > 0:
+            result["cumulative_change_30d"] = float((close[-1] - price_30d_ago) / price_30d_ago * 100)
+    # ─────────────────────────────────────────────────────────────
 
     return result

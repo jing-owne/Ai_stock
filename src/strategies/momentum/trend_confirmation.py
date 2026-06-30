@@ -41,7 +41,7 @@ class TrendConfirmationStrategy(BaseStrategy):
         min_consecutive = cfg.get("min_consecutive_up", 3)
         min_rsi = cfg.get("min_rsi", 55)
         min_change = cfg.get("min_price_change", 0.5)
-        max_change = cfg.get("max_price_change", 7.0)
+        max_change = cfg.get("max_price_change", 9999.0)  # v2.6.9: 移除涨幅上限，跟随趋势不限制
         min_amount = cfg.get("min_amount", 100_000_000)
         min_score = cfg.get("min_score", 20)
 
@@ -80,9 +80,41 @@ class TrendConfirmationStrategy(BaseStrategy):
 
             # 条件4: 连续上涨 (来自hikyuu 连续N日上涨≥1%/天)
             consecutive_up = indicators.get("consecutive_up", 0)
-            if consecutive_up >= min_consecutive:
+            # ── v2.6.9 改动: 4条件之一改为「累计涨幅门槛」───────────
+            # 连续上涨天数作为条件之一，必须附带累计涨幅要求
+            # 门槛: 连涨3天≥2% / 5天≥3% / 7天≥5%（各用对应周期涨幅）
+            gain_3d = indicators.get("cumulative_change_3d", 0.0)
+            gain_5d = indicators.get("cumulative_change_5d", 0.0)
+            gain_7d = indicators.get("cumulative_change_7d", 0.0)
+            consecutive_up = indicators.get("consecutive_up", 0)
+            gain_threshold_met = False
+            gain_label = ""
+            if consecutive_up >= 7 and gain_7d >= 5.0:
+                gain_threshold_met = True
+                gain_label = f"7日{gain_7d:.1f}%"
+            elif consecutive_up >= 5 and gain_5d >= 3.0:
+                gain_threshold_met = True
+                gain_label = f"5日{gain_5d:.1f}%"
+            elif consecutive_up >= 3 and gain_3d >= 2.0:
+                gain_threshold_met = True
+                gain_label = f"3日{gain_3d:.1f}%"
+            if consecutive_up >= min_consecutive and gain_threshold_met:
                 conditions_met += 1
-                details.append(f"连涨{consecutive_up}日")
+                details.append(f"连涨{consecutive_up}日(累计{gain_label})")
+            elif consecutive_up >= min_consecutive:
+                details.append(f"连涨{consecutive_up}日(累计不足)")
+            # ─────────────────────────────────────────────────────────────
+
+            # ── v2.6.9 新增: 30日涨幅>100% 风险提示 ────────────────────
+            gain_30d = indicators.get("cumulative_change_30d", 0.0)
+            risk_warn_30d = ""
+            if gain_30d > 100:
+                risk_warn_30d = "⚠️⚠️ 极度高位:30日翻倍!"
+            elif gain_30d > 80:
+                risk_warn_30d = "⚠️ 高位风险:30日涨近翻倍"
+            elif gain_30d > 50:
+                risk_warn_30d = "⚠️ 注意:30日涨幅已超50%"
+            # ─────────────────────────────────────────────────────────────
 
             if conditions_met < 2:
                 continue
@@ -114,10 +146,14 @@ class TrendConfirmationStrategy(BaseStrategy):
                 continue
 
             # ── 信号 ──
+            # ── v2.6.9: 生成信号标签（含风险提示）────────────────────
             signals = []
             sfx = "「追涨确认」"
             if conditions_met == 4:
                 signals.append(f"4条件共振{sfx}")
+            # 30日涨幅>50% → 加入风险提示信号
+            if risk_warn_30d:
+                signals.append(risk_warn_30d)
             else:
                 signals.append(f"{conditions_met}/4条件{sfx}")
             if rsi14 > 55:
@@ -141,6 +177,10 @@ class TrendConfirmationStrategy(BaseStrategy):
                     "consecutive_up": consecutive_up,
                     "ma_bullish": ma_bullish,
                     "position_20d": round(pos_20d, 1),
+                "rsi_momentum_5d": round(indicators.get("rsi_momentum_5d", 0.0), 1),
+                "gain_30d": round(gain_30d, 1),
+                "gain_5d": round(gain_5d, 1),
+                "risk_warn_30d": risk_warn_30d,
                 }
             ))
 

@@ -49,6 +49,7 @@ class StockData:
     amount: float                  # 成交额
     change_pct: float = 0.0        # 涨跌幅
     turn_rate: float = 0.0        # 换手率
+    pe_ratio: Optional[float] = None  # 市盈率TTM (v2.6.10: 新增，供multi_factor使用)
     
     def __post_init__(self):
         """数据验证"""

@@ -1,8 +1,8 @@
 """
-Marcus策略小助手 - AI驱动的量化策略分析平台 · 公共模块重构
+Marcus策略小助手 - AI驱动的量化策略分析平台 · 连续上涨策略优化
 """
 
-__version__ = "2.6.5"
+__version__ = "2.7.0"
 __author__ = "Marcus策略小助手"
 
 from .core.types import StockData, ScanResult, MarketAnalysis

@@ -65,6 +65,17 @@ def calc_trend_score(indicators: Dict[str, float]) -> float:
     rsi = indicators.get("rsi14")
     if rsi is not None and rsi > 50:
         score += 5
+    # ── v2.6.9: RSI动量加成 ──────────────────────────────────────
+    # RSI从低位快速回升（动量>0）= 强势信号，加分
+    rsi_mom = indicators.get("rsi_momentum_5d", 0)
+    if rsi_mom > 5:
+        score += 10  # RSI5日回升>5点 = 强势回升
+    elif rsi_mom > 0:
+        score += 5   # RSI正在走强
+    # RSI由强转弱（动量<0 且 RSI>70）= 潜在见顶，减分
+    if rsi is not None and rsi > 70 and rsi_mom < -5:
+        score -= 10
+    # ───────────────────────────────────────────────────────────
     return min(score, 100.0)
 
 
