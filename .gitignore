@@ -63,6 +63,8 @@ Thumbs.db
 # Project specific
 output/
 cache/
+data/
+backtest/output/
 *.log
 preview_*.html
 

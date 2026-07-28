@@ -550,7 +550,7 @@ def send_bond_email(
         subject=subject,
         html_content=html_content,
         to_emails=bond_cfg.to_emails,
-        cc_emails=bond_cfg.cc_emails,
+        cc_emails=bond_cfg.cc_emails,  # 新债专用抄送池（来自 configs/settings.yaml）
         debug=debug,
     )
 

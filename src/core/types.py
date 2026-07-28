@@ -8,23 +8,30 @@ from enum import Enum
 
 
 class StrategyType(Enum):
-    """策略类型枚举 (v2.6.5 — 9大独立策略)"""
-    # 动量类
-    VOLUME_BREAKOUT = "volume_breakout"       # 放量突破 = volume_surge + new_high_break
-    TURNOVER_RANK = "turnover_rank"           # 成交额排名
-    CONSECUTIVE_POSITIVE = "consecutive_positive"  # 连续小阳吸筹
-    NET_INFLOW = "net_inflow"                 # 资金净流入
+    """策略类型枚举 (v2.8 — 4聚合策略 + 向后兼容旧枚举)"""
+    # 动量类（旧，_DEPRECATED — 仅供 aggregated 内部引用）
+    VOLUME_BREAKOUT = "volume_breakout"       # → LaunchStrategy
+    TURNOVER_RANK = "turnover_rank"           # → MoneyStrategy
+    CONSECUTIVE_POSITIVE = "consecutive_positive"  # → BottomStrategy
+    NET_INFLOW = "net_inflow"                 # → MoneyStrategy
 
-    # 技术类
-    MULTI_FACTOR = "multi_factor"             # 多因子增强 = multi_factor + institution
-    AI_TECHNICAL = "ai_technical"             # AI技术面
-    BOX_BREAKOUT = "box_breakout"             # 箱体突破
-    MA_TREND = "ma_trend"                     # 均线趋势 = ma_divergence + sustained_uptrend
-    BOTTOM_REBOUND = "bottom_rebound"         # 底部反弹 = rsi_oversold + bottom_rebound
-    TREND_CONFIRMATION = "trend_confirmation" # 追涨确认信号 (v2.6.8 新增，来自hikyuu回测)
+    # 技术类（旧，_DEPRECATED — 仅供 aggregated 内部引用）
+    MULTI_FACTOR = "multi_factor"             # → MoneyStrategy
+    AI_TECHNICAL = "ai_technical"             # → TrendStrategy
+    BOX_BREAKOUT = "box_breakout"             # → LaunchStrategy
+    MA_TREND = "ma_trend"                     # → TrendStrategy
+    BOTTOM_REBOUND = "bottom_rebound"         # → BottomStrategy
+    TREND_CONFIRMATION = "trend_confirmation" # → TrendStrategy
+    LAUNCH_FINGERPRINT = "launch_fingerprint" # → LaunchStrategy（内部0.35权重）
+
+    # 4聚合策略（v2.8 主入口）
+    BOTTOM = "bottom"       # 底部策略（底部反弹+连续小阳）
+    LAUNCH = "launch"       # 启动策略（放量突破+箱体+指纹）
+    TREND = "trend"         # 追涨策略（追涨确认+均线+AI技术面）
+    MONEY = "money"         # 资金策略（资金净流入+成交额+多因子）
 
     # 综合
-    COMPOSITE = "composite"                   # 综合策略（整合9大策略）
+    COMPOSITE = "composite" # 综合策略（4聚合策略编排）
 
     # ── 向后兼容（标记为已合并）──
     VOLUME_SURGE = "volume_surge"             # → VOLUME_BREAKOUT
@@ -49,6 +56,8 @@ class StockData:
     amount: float                  # 成交额
     change_pct: float = 0.0        # 涨跌幅
     turn_rate: float = 0.0        # 换手率
+    pe_ratio: Optional[float] = None  # 市盈率TTM ( 新增，供multi_factor使用)
+    sector: Optional[str] = None      # 所属板块（供策略板块维度使用）
     
     def __post_init__(self):
         """数据验证"""
@@ -72,7 +81,9 @@ class ScanResult:
     @property
     def is_bullish(self) -> bool:
         """是否看多"""
-        return self.score >= 60 and len(self.signals) >= 2
+        return (self.score >= 60 and len(self.signals) >= 2) or (
+            self.score >= 80 and len(self.signals) >= 1
+        )
     
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""

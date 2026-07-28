@@ -4,21 +4,29 @@ K线数据并发获取模块
 设计目标:
 - 并发获取多只标的的K线数据，用于技术指标计算
 - 10线程并发: 200只约6秒, 500只约15秒
-- 支持批量获取 + 结果缓存
+- 支持批量获取 + 结果缓存（内存 + 当日磁盘）
 
 数据源说明:
-- TDX通道: 依赖WorkBuddy通达信应用，不可单独作为数据源使用
-- 东财通道: 生产环境默认数据源
-- 新浪通道: 备用数据源
+- 新浪通道: 自动模式首选（稳定、不限频）
+- 腾讯通道: 自动模式次选
+- 东财通道: 自动模式末选（push2 子域名易 RemoteDisconnected）
+- TDX通道: 仅分析流程使用，依赖WorkBuddy通达信应用
 
 数据流区分:
-- 选标的流程（生产）: 使用东财→新浪双源 fallback，不使用 KlineFetcher
+- 选标的流程（生产）: 自动模式 新浪→腾讯→东财 三源 fallback + 超时熔断
 - 分析流程（TDX）: 使用 source='tdx'，只走 TDX 通道
+
+熔断策略:
+- 单次请求超时 3s
+- 单源连续 3 次失败 → 标记不可用，本轮跳过该源
 """
 
 import json
 import logging
+import os
 import time
+from dataclasses import asdict
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -38,26 +46,36 @@ class KlineFetcher:
     """K线数据获取器（可配置数据源，带重试机制和数据验证）"""
 
     # 数据源常量
-    # 注意: TDX 依赖 WorkBuddy 通达信应用，不能单独作为数据源使用
     SOURCE_TDX = "tdx"
     SOURCE_EASTMONEY = "eastmoney"
     SOURCE_SINA = "sina"
+    SOURCE_TENCENT = "tencent"
+
+    # 自动模式优先级（开关关闭时）：新浪 → 腾讯 → 东财
+    AUTO_SOURCE_ORDER = [SOURCE_SINA, SOURCE_TENCENT, SOURCE_EASTMONEY]
+    # TDX开关打开时优先级：TDX → 新浪 → 腾讯 → 东财
+    AUTO_SOURCE_ORDER_WITH_TDX = [SOURCE_TDX, SOURCE_SINA, SOURCE_TENCENT, SOURCE_EASTMONEY]
+
+    # TDX开关（从strategy_config.json读取）
+    _tdx_enabled: Optional[bool] = None
 
     EASTMONEY_KLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
     SINA_KLINE_URL = "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData"
+    TENCENT_KLINE_URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+    TENCENT_QUOTE_URL = "http://qt.gtimg.cn/q="  # 实时行情（仅用于刷新磁盘缓存中冻结的"今日"bar）
     HEADERS = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Referer": "https://quote.eastmoney.com/",
     }
 
-    def __init__(self, max_workers: int = 1, timeout: int = 15, delay_per_request: float = 0.02,
-                 source: str = None):
+    def __init__(self, max_workers: int = 8, timeout: int = 15, delay_per_request: float = 0.015,
+                 source: str = None, no_cache: bool = False):
         """
         Args:
             source: 数据源选择
-                - None（默认）: 自动模式，生产流程用东财→新浪
-                - "tdx": 仅TDX通道（需WorkBuddy通达信应用支持）
+                - None（默认）: 自动模式，根据TDX开关决定优先级
+                - "tdx": 仅TDX通道（需WorkBuddy通达信应用支持，分析流程）
                 - "eastmoney": 仅东财通道
                 - "sina": 仅新浪通道
         """
@@ -65,21 +83,67 @@ class KlineFetcher:
         self.timeout = timeout
         self.delay_per_request = delay_per_request
         self.source = source
+        self.no_cache = no_cache
         self._cache: Dict[str, List[StockData]] = {}
         self._cache_time: Dict[str, float] = {}
         self._cache_ttl = 21600  # 6小时缓存（早上9:30设置，下午16:00仍有效）
         self._eastmoney_available: Optional[bool] = None
         self._tdx_available: Optional[bool] = None
-        self._max_retries = 3  # 最大重试次数
+        self._max_retries = 1  # 单源最大重试次数（熔断由上层统一处理）
 
-    def fetch_one(self, symbol: str, days: int = 60) -> Optional[List[StockData]]:
+        # ── 超时熔断状态 ──
+        self._request_timeout = 3  # 单次请求超时 3s
+        self._circuit_threshold = 3  # 连续 3 次失败 → 熔断
+        # 初始化所有可能的数据源（含TDX）
+        all_sources = self.AUTO_SOURCE_ORDER_WITH_TDX
+        self._source_fail_count: Dict[str, int] = {s: 0 for s in all_sources}
+        self._source_available: Dict[str, bool] = {s: True for s in all_sources}
+
+        # ── 当日磁盘缓存 ──
+        self._disk_cache_root = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "cache", "kline"
+        )
+        # action2: 实例化时即清理过期K线缓存（保留最近2天），保证任何调用路径都触发清理，
+        # 不再只依赖 fetch_batch。
+        self._cleanup_old_kline_cache(keep_days=2)
+
+    @classmethod
+    def _is_tdx_enabled(cls) -> bool:
+        """从strategy_config.json读取TDX开关状态"""
+        if cls._tdx_enabled is not None:
+            return cls._tdx_enabled
+        try:
+            from ..core.config import load_runtime_config
+            cfg = load_runtime_config()
+            cls._tdx_enabled = cfg.get("tdx_data_source", cfg.get("tdx_enabled", False))
+            logger.info(f"TDX数据源开关: {'开启' if cls._tdx_enabled else '关闭'}")
+        except Exception as e:
+            logger.debug(f"读取TDX开关失败，默认关闭: {e}")
+            cls._tdx_enabled = False
+        return cls._tdx_enabled
+
+    @staticmethod
+    def _filter_as_of(kline_list: Optional[List[StockData]], as_of: Optional[str], days: int) -> Optional[List[StockData]]:
+        if not kline_list:
+            return kline_list
+        if not as_of:
+            return kline_list[-days:] if len(kline_list) > days else kline_list
+        cutoff = str(as_of)[:10]
+        filtered = [k for k in kline_list if str(k.date)[:10] <= cutoff]
+        if len(filtered) > days:
+            filtered = filtered[-days:]
+        return filtered or None
+
+    def fetch_one(self, symbol: str, days: int = 60, as_of: Optional[str] = None) -> Optional[List[StockData]]:
         """
         获取单只标的K线数据
 
         Fallback 根据 source 配置:
         - source="tdx": 只用TDX（分析流程）
         - source="eastmoney": 东财
-        - source=None: 自动模式（生产流程：优先东财→新浪）
+        - source="sina": 新浪
+        - source=None: 自动模式（生产流程：新浪→腾讯→东财 三源 fallback + 熔断）
 
         Args:
             symbol: 纯数字代码
@@ -88,33 +152,233 @@ class KlineFetcher:
         Returns:
             StockData 列表，从旧到新排列；失败返回 None
         """
-        # 检查缓存
-        cache_key = f"{symbol}_{days}"
+        cache_key = f"{symbol}_{days}_{as_of or 'latest'}"
         now = time.time()
-        if cache_key in self._cache and (now - self._cache_time.get(cache_key, 0)) < self._cache_ttl:
-            return self._cache[cache_key]
+
+        if not self.no_cache:
+            # 检查内存缓存
+            if cache_key in self._cache and (now - self._cache_time.get(cache_key, 0)) < self._cache_ttl:
+                return self._filter_as_of(self._cache[cache_key], as_of, days)
+
+            # 检查当日磁盘缓存（跨进程复用"历史"K线，避免重复拉取）
+            disk_hit = self._load_disk_cache(symbol, days)
+            if disk_hit:
+                # action1: 历史 bar 复用磁盘缓存；但"今日"那根 bar 必须实时刷新，
+                # 否则盘中会沿用开盘快照，导致技术信号全天不变。
+                if as_of is None:
+                    disk_hit = self._refresh_last_bar_realtime(symbol, disk_hit, days)
+                disk_hit = self._filter_as_of(disk_hit, as_of, days)
+                if not disk_hit:
+                    return None
+                self._cache[cache_key] = disk_hit
+                self._cache_time[cache_key] = now
+                logger.debug(f"[{symbol}] K线磁盘缓存命中(末根已实时刷新): {len(disk_hit)}条")
+                return disk_hit
 
         # ═══════════════════════════════════════════════
         # 根据 source 选择数据源路由
         # ═══════════════════════════════════════════════
         if self.source == self.SOURCE_TDX:
-            # 分析流程：仅 TDX 通道
-            return self._fetch_with_tdx(symbol, days, cache_key, now)
-        elif self.source == self.SOURCE_EASTMONEY:
-            return self._fetch_with_eastmoney(symbol, days, cache_key, now)
-        else:
-            # 自动模式（生产流程）：TDX可用则优先TDX，否则东财→新浪
+            # 分析流程：TDX优先 + fallback
             result = self._fetch_with_tdx(symbol, days, cache_key, now)
+            return self._filter_as_of(result, as_of, days)
+        elif self.source == self.SOURCE_EASTMONEY:
+            result = self._fetch_from_eastmoney(symbol, days)
+            result = self._filter_as_of(result, as_of, days)
             if result:
+                self._cache[cache_key] = result
+                self._cache_time[cache_key] = now
+                if as_of is None:
+                    self._save_disk_cache(symbol, result)
+            return result
+        elif self.source == self.SOURCE_SINA:
+            result = self._fetch_from_sina(symbol, days)
+            result = self._filter_as_of(result, as_of, days)
+            if result:
+                self._cache[cache_key] = result
+                self._cache_time[cache_key] = now
+                if as_of is None:
+                    self._save_disk_cache(symbol, result)
+            return result
+        else:
+            # 自动模式：根据TDX开关决定优先级
+            # 开关ON:  TDX → 新浪 → 腾讯 → 东财
+            # 开关OFF: 新浪 → 腾讯 → 东财
+            result = self._fetch_auto(symbol, days, cache_key, now)
+            return self._filter_as_of(result, as_of, days)
+
+    # ═══════════════════════════════════════════════
+    # action1: 末根实时刷新（盘中日K线的"今日"bar 必须实时）
+    # ═══════════════════════════════════════════════
+
+    def _fetch_today_bar(self, symbol: str) -> Optional[List[StockData]]:
+        """实时拉取标的"今日"那根日K线 bar（腾讯实时行情）。
+
+        仅用于替换磁盘缓存中冻结的"今日 bar"，历史 bar 仍走磁盘缓存。
+        返回 [StockData(date=今天)] 或 None（拉取失败/非交易日尚无今日bar）。
+        """
+        tc_symbol = f"sh{symbol}" if symbol.startswith("6") else f"sz{symbol}"
+        url = f"{self.TENCENT_QUOTE_URL}{tc_symbol}"
+        try:
+            session = requests.Session()
+            session.headers.update({
+                "User-Agent": self.HEADERS["User-Agent"],
+                "Referer": "https://finance.qq.com/",
+            })
+            resp = session.get(url, timeout=self._request_timeout)
+            session.close()
+            if resp.status_code != 200:
+                return None
+            line = resp.text.strip()
+            if "v_" not in line or "~" not in line:
+                return None
+            parts = line.split('~')
+            if len(parts) < 43:
+                return None
+            close = float(parts[3]) if parts[3] else 0
+            if close <= 0:
+                return None
+            prev_close = float(parts[5]) if parts[5] else 0
+            pct = round((close - prev_close) / prev_close * 100, 2) if prev_close else 0.0
+            today = datetime.now().strftime("%Y-%m-%d")
+            return [StockData(
+                symbol=symbol,
+                name="",
+                date=today,
+                open=round(float(parts[4]) if parts[4] else close, 2),
+                high=round(float(parts[41]) if parts[41] else close, 2),
+                low=round(float(parts[42]) if parts[42] else close, 2),
+                close=round(close, 2),
+                volume=float(parts[6]) * 100 if parts[6] else 0.0,       # 手→股
+                amount=float(parts[37]) * 10000 if parts[37] else 0.0,   # 万元→元
+                change_pct=pct,
+                turn_rate=round(float(parts[38]) if parts[38] else 0, 2),
+            )]
+        except Exception as e:
+            logger.debug(f"[{symbol}] 实时今日bar拉取失败(不影响历史缓存): {e}")
+            return None
+
+    def _refresh_last_bar_realtime(self, symbol: str, kline_list: List[StockData], days: int) -> List[StockData]:
+        """若磁盘缓存末根日期为"今天"，则用实时今日bar替换末根；否则原样返回。
+
+        历史 N-1 根 bar 复用磁盘缓存（省带宽），仅"今日"那根实时刷新，
+        既满足"保留历史K线、但日K线实时拉取"的缓存定位，又避免盘中沿用开盘快照。
+        实时拉取失败时降级沿用缓存末根，不中断。
+        """
+        if not kline_list:
+            return kline_list
+        last = kline_list[-1]
+        last_date = str(last.date)[:10]
+        today = datetime.now().strftime("%Y-%m-%d")
+        if last_date != today:
+            # 末根不是今天（如周末/休市后首根仍是上一交易日），无需刷新
+            return kline_list
+        today_bars = self._fetch_today_bar(symbol)
+        if not today_bars:
+            logger.debug(f"[{symbol}] 实时今日bar获取失败，沿用缓存末根")
+            return kline_list
+        return kline_list[:-1] + today_bars
+
+    # ═══════════════════════════════════════════════
+    # 自动模式：三源优先级 + 超时熔断
+    # ═══════════════════════════════════════════════
+
+    def _fetch_auto(self, symbol: str, days: int, cache_key: str, now: float) -> Optional[List[StockData]]:
+        """自动模式：根据TDX开关选择优先级，按序遍历数据源，首个成功即返回；失败累计熔断"""
+        # 根据开关决定数据源优先级
+        source_order = self.AUTO_SOURCE_ORDER_WITH_TDX if self._is_tdx_enabled() else self.AUTO_SOURCE_ORDER
+        
+        for source in source_order:
+            if not self._source_available.get(source, True):
+                continue  # 已熔断，跳过
+            result = self._dispatch_source(source, symbol, days)
+            if result:
+                self._source_fail_count[source] = 0  # 成功，重置计数
+                self._cache[cache_key] = result
+                self._cache_time[cache_key] = now
+                self._save_disk_cache(symbol, result)
                 return result
-            return self._fetch_with_eastmoney(symbol, days, cache_key, now)
+            # 失败：累计熔断计数
+            self._source_fail_count[source] += 1
+            if self._source_fail_count[source] >= self._circuit_threshold:
+                self._source_available[source] = False
+                logger.warning(
+                    f"数据源 {source} 连续失败 {self._circuit_threshold} 次，已熔断切换 "
+                    f"(剩余可用: {[s for s in source_order if self._source_available.get(s, True)]})"
+                )
+        logger.warning(f"[{symbol}] 所有数据源均失败 (优先级: {source_order})")
+        return None
+
+    def _dispatch_source(self, source: str, symbol: str, days: int) -> Optional[List[StockData]]:
+        """路由到指定数据源的获取方法"""
+        if source == self.SOURCE_SINA:
+            return self._fetch_from_sina(symbol, days)
+        elif source == self.SOURCE_TENCENT:
+            return self._fetch_from_tencent(symbol, days)
+        elif source == self.SOURCE_EASTMONEY:
+            # 懒加载：首次使用东财时测试可用性（用自选标的），失败则跳过
+            if self._eastmoney_available is None:
+                self._eastmoney_available = self._test_eastmoney()
+            if not self._eastmoney_available:
+                return None
+            return self._fetch_from_eastmoney(symbol, days)
+        elif source == self.SOURCE_TDX:
+            # TDX通道（开关打开时使用）
+            return self._fetch_from_tdx_auto(symbol, days)
+        return None
+
+    def _fetch_from_tdx_auto(self, symbol: str, days: int) -> Optional[List[StockData]]:
+        """自动模式下的TDX获取（带fallback，不使用独立缓存）"""
+        from .tdx_fetcher import get_tdx_fetcher
+        
+        try:
+            tdx = get_tdx_fetcher()
+            if tdx is None:
+                logger.debug(f"[{symbol}] TDX客户端未连接")
+                return None
+
+            kline_list = tdx.get_kline(symbol, frequency=4, offset=days)
+            if not kline_list:
+                return None
+
+            stock_list = []
+            for k in kline_list:
+                try:
+                    stock_list.append(StockData(
+                        symbol=symbol,
+                        name='',
+                        date=k.get('date', ''),
+                        open=float(k.get('open', 0)),
+                        close=float(k.get('close', 0)),
+                        high=float(k.get('high', 0)),
+                        low=float(k.get('low', 0)),
+                        volume=float(k.get('volume', 0)),
+                        amount=float(k.get('amount', 0)),
+                    ))
+                except (ValueError, TypeError) as e:
+                    logger.debug(f"[{symbol}] TDX数据转换失败: {e}")
+                    continue
+
+            if not self._validate_kline_data(symbol, stock_list, "TDX"):
+                return None
+            return stock_list
+
+        except Exception as e:
+            logger.debug(f"[{symbol}] TDX自动获取失败: {e}")
+            return None
 
     def _fetch_with_tdx(self, symbol: str, days: int,
                         cache_key: str, now: float) -> Optional[List[StockData]]:
-        """使用TDX通道获取K线（带重试机制）—— 需WorkBuddy通达信应用支持"""
+        """使用TDX通道获取K线（带重试机制）—— 需WorkBuddy通达信应用支持
+        
+        分析流程数据源优先级: TDX → 新浪 → 腾讯 → 东财
+        如果TDX失败，自动fallback到其他数据源
+        """
         from .tdx_fetcher import get_tdx_fetcher
 
         last_error = None
+        
+        # 步骤1: 尝试TDX
         for attempt in range(self._max_retries):
             try:
                 tdx = get_tdx_fetcher()
@@ -169,39 +433,74 @@ class KlineFetcher:
                     logger.debug(f"[{symbol}] TDX K线失败，重试 {attempt+2}/{self._max_retries}: {e}")
                     time.sleep(1.0 * (attempt + 1))
 
-        logger.warning(f"[{symbol}] TDX K线获取失败(重试{self._max_retries}次): {last_error}")
-        return None
-
-    def _fetch_with_eastmoney(self, symbol: str, days: int,
-                              cache_key: str, now: float) -> Optional[List[StockData]]:
-        """使用东财获取K线（生产流程默认数据源）"""
-        # 首次调用时检测东财是否可用
+        logger.warning(f"[{symbol}] TDX K线获取失败(重试{self._max_retries}次): {last_error}，尝试fallback...")
+        
+        # 步骤2: TDX失败，fallback到新浪
+        result = self._fetch_from_sina(symbol, days)
+        if result:
+            self._cache[cache_key] = result
+            self._cache_time[cache_key] = now
+            self._save_disk_cache(symbol, result)
+            logger.info(f"[{symbol}] Tallback到新浪成功: {len(result)}条")
+            return result
+        
+        # 步骤3: 新浪失败，fallback到腾讯
+        result = self._fetch_from_tencent(symbol, days)
+        if result:
+            self._cache[cache_key] = result
+            self._cache_time[cache_key] = now
+            self._save_disk_cache(symbol, result)
+            logger.info(f"[{symbol}] Tallback到腾讯成功: {len(result)}条")
+            return result
+        
+        # 步骤4: 腾讯失败，fallback到东财
         if self._eastmoney_available is None:
             self._eastmoney_available = self._test_eastmoney()
-
-        # 东财可用时先尝试东财
         if self._eastmoney_available:
             result = self._fetch_from_eastmoney(symbol, days)
             if result:
                 self._cache[cache_key] = result
                 self._cache_time[cache_key] = now
+                self._save_disk_cache(symbol, result)
+                logger.info(f"[{symbol}] Tallback到东财成功: {len(result)}条")
                 return result
-            # 东财失败，标记不可用，后续直接走新浪
-            self._eastmoney_available = False
-            logger.info("东财K线不可用，切换新浪接口")
-
-        # 新浪备用源
-        result = self._fetch_from_sina(symbol, days)
-        if result:
-            self._cache[cache_key] = result
-            self._cache_time[cache_key] = now
-            return result
-
+        
+        logger.warning(f"[{symbol}] 所有数据源均失败（TDX→新浪→腾讯→东财）")
         return None
 
+    def _load_test_symbols(self) -> List[str]:
+        """从 watchlist.json + strategy_config.json 加载自选标的代码（holdings + watchlist）"""
+        try:
+            symbols = []
+            # 持仓
+            config_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                "strategy_config.json"
+            )
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            symbols += [h.get("symbol") for h in cfg.get("holdings", []) if h.get("symbol")]
+        except Exception as e:
+            logger.debug(f"加载持仓json失败: {e}")
+        try:
+            # 自选
+            wl_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                "watchlist.json"
+            )
+            with open(wl_path, "r", encoding="utf-8") as f:
+                wl = json.load(f)
+            symbols += [w.get("symbol") for w in wl if w.get("symbol")]
+        except Exception as e:
+            logger.debug(f"加载自选json失败: {e}")
+        if symbols:
+            return symbols
+        # 回退：原硬编码列表
+        return ["600519", "000001", "300014"]
+
     def _test_eastmoney(self) -> bool:
-        """测试东财K线接口是否可用（多标的测试，3秒超时）"""
-        test_symbols = ["600519", "000001", "300014"]
+        """测试东财K线接口是否可用（用自选标的测试，3秒超时）"""
+        test_symbols = self._load_test_symbols()[:3]
         for symbol in test_symbols:
             try:
                 secid = self._make_secid(symbol)
@@ -211,7 +510,7 @@ class KlineFetcher:
                     self.EASTMONEY_KLINE_URL,
                     params={"secid": secid, "fields1": "f1", "fields2": "f51",
                             "klt": "101", "fqt": "1", "beg": "0", "end": "20500101"},
-                    timeout=3, verify=False,
+                    timeout=self._request_timeout, verify=False,
                 )
                 session.close()
                 data = resp.json()
@@ -223,14 +522,13 @@ class KlineFetcher:
             except Exception as e:
                 logger.debug(f"东财K线接口测试{symbol}失败: {e}")
 
-        logger.info("东财K线接口不可用(所有测试标的均失败)，将使用新浪备用源")
+        logger.info("东财K线接口不可用(自选标的测试均失败)，自动模式将优先新浪/腾讯")
         return False
 
     def _fetch_from_eastmoney(self, symbol: str, days: int) -> Optional[List[StockData]]:
         """从东方财富获取K线（带重试机制）"""
         try:
             secid = self._make_secid(symbol)
-            from datetime import datetime, timedelta
             end_date = datetime.now().strftime("%Y%m%d")
             beg_date = (datetime.now() - timedelta(days=days + 30)).strftime("%Y%m%d")
             params = {
@@ -247,7 +545,7 @@ class KlineFetcher:
                 try:
                     session = requests.Session()
                     session.headers.update(self.HEADERS)
-                    resp = session.get(self.EASTMONEY_KLINE_URL, params=params, timeout=self.timeout, verify=False)
+                    resp = session.get(self.EASTMONEY_KLINE_URL, params=params, timeout=self._request_timeout, verify=False)
                     data = resp.json()
                     session.close()
 
@@ -302,7 +600,7 @@ class KlineFetcher:
             try:
                 session = requests.Session()
                 session.headers.update({"User-Agent": self.HEADERS["User-Agent"]})
-                resp = session.get(self.SINA_KLINE_URL, params=params, timeout=10)
+                resp = session.get(self.SINA_KLINE_URL, params=params, timeout=self._request_timeout)
                 session.close()
 
                 if resp.status_code != 200:
@@ -365,6 +663,74 @@ class KlineFetcher:
                     continue
                 logger.warning(f"[{symbol}] 新浪K线失败(重试{self._max_retries}次): {e}")
                 return None
+
+    def _fetch_from_tencent(self, symbol: str, days: int) -> Optional[List[StockData]]:
+        """从腾讯获取日K线（前复权，自动模式次选源）"""
+        tc_symbol = f"sh{symbol}" if symbol.startswith("6") else f"sz{symbol}"
+        # param=代码,周期(day),起始,,结束,条数,前复权(qfq)
+        param = f"{tc_symbol},day,,,{days},qfq"
+        try:
+            session = requests.Session()
+            session.headers.update({"User-Agent": self.HEADERS["User-Agent"]})
+            resp = session.get(
+                self.TENCENT_KLINE_URL,
+                params={"param": param},
+                timeout=self._request_timeout,
+            )
+            session.close()
+
+            if resp.status_code != 200:
+                logger.debug(f"[{symbol}] 腾讯返回HTTP {resp.status_code}")
+                return None
+
+            data = resp.json()
+            if not data or data.get("code") != 0:
+                logger.debug(f"[{symbol}] 腾讯返回异常: code={data.get('code') if data else 'None'}")
+                return None
+
+            # 响应结构: data.{symbol}.qfqday 或 data.{symbol}.day
+            symbol_data = data.get("data", {}).get(tc_symbol, {})
+            klines = symbol_data.get("qfqday") or symbol_data.get("day") or []
+            if not klines:
+                logger.debug(f"[{symbol}] 腾讯无K线数据")
+                return None
+
+            # 每行: [date, open, close, high, low, volume, ...]
+            stock_list = []
+            for row in klines:
+                if not row or len(row) < 6:
+                    continue
+                try:
+                    stock_list.append(StockData(
+                        symbol=symbol,
+                        name="",
+                        date=str(row[0]),
+                        open=float(row[1]),
+                        close=float(row[2]),
+                        high=float(row[3]),
+                        low=float(row[4]),
+                        volume=float(row[5]),
+                        amount=0.0,
+                        change_pct=0.0,
+                        turn_rate=0.0,
+                    ))
+                except (ValueError, TypeError):
+                    continue
+
+            # 计算涨跌幅
+            for i in range(len(stock_list)):
+                if i > 0 and stock_list[i-1].close > 0:
+                    stock_list[i].change_pct = round(
+                        (stock_list[i].close - stock_list[i-1].close) / stock_list[i-1].close * 100, 2
+                    )
+
+            if not self._validate_kline_data(symbol, stock_list, "腾讯"):
+                return None
+            return stock_list
+
+        except Exception as e:
+            logger.debug(f"[{symbol}] 腾讯K线失败: {e}")
+            return None
 
     @staticmethod
     def _parse_eastmoney_klines(symbol: str, name: str, klines: list) -> List[StockData]:
@@ -607,6 +973,7 @@ class KlineFetcher:
         self,
         symbols: List[str],
         days: int = 60,
+        as_of: Optional[str] = None,
     ) -> Dict[str, List[StockData]]:
         """
         获取多只标的的K线数据
@@ -631,9 +998,13 @@ class KlineFetcher:
         now = time.time()
         need_fetch = []
         for sym in symbols:
-            cache_key = f"{sym}_{days}"
+            cache_key = f"{sym}_{days}_{as_of or 'latest'}"
             if cache_key in self._cache and (now - self._cache_time.get(cache_key, 0)) < self._cache_ttl:
-                results[sym] = self._cache[cache_key]
+                cached = self._filter_as_of(self._cache[cache_key], as_of, days)
+                if cached:
+                    results[sym] = cached
+                else:
+                    need_fetch.append(sym)
             else:
                 need_fetch.append(sym)
 
@@ -643,12 +1014,14 @@ class KlineFetcher:
                 f"(缓存命中 {len(results)}, 并发={self.max_workers}, 延迟={self.delay_per_request}s)..."
             )
             start_time = time.time()
+            # 顺手清理旧日期磁盘缓存（保留最近2天）
+            self._cleanup_old_kline_cache(keep_days=2)
 
             if self.max_workers <= 1:
                 # 串行模式：最稳定，防限频
                 for i, sym in enumerate(need_fetch):
                     try:
-                        kline = self.fetch_one(sym, days)
+                        kline = self.fetch_one(sym, days, as_of=as_of)
                         if kline:
                             results[sym] = kline
                     except Exception as e:
@@ -665,7 +1038,7 @@ class KlineFetcher:
                 with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                     future_map = {}
                     for i, sym in enumerate(need_fetch):
-                        future_map[executor.submit(self.fetch_one, sym, days)] = sym
+                        future_map[executor.submit(self.fetch_one, sym, days, as_of)] = sym
                         if i < len(need_fetch) - 1:
                             time.sleep(self.delay_per_request)
 
@@ -718,8 +1091,88 @@ class KlineFetcher:
         else:
             return f"0.{symbol}"
 
+    # ═══════════════════════════════════════════════
+    # 当日磁盘缓存（跨进程复用）
+    # ═══════════════════════════════════════════════
+
+    def _disk_cache_path(self, symbol: str) -> str:
+        """当日K线磁盘缓存路径: cache/kline/{YYYY-MM-DD}/{symbol}.json"""
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        return os.path.join(self._disk_cache_root, date_str, f"{symbol}.json")
+
+    def _load_disk_cache(self, symbol: str, days: int) -> Optional[List[StockData]]:
+        """加载当日磁盘缓存；命中且条数足够时返回最近 days 条（切片满足不同 days 参数）"""
+        path = self._disk_cache_path(symbol)
+        if not os.path.exists(path):
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            if not isinstance(raw, list) or len(raw) < days:
+                return None
+            stock_list = []
+            for d in raw[-days:]:
+                # 兼容 pe_ratio 可选字段
+                stock_list.append(StockData(
+                    symbol=d.get("symbol", symbol),
+                    name=d.get("name", ""),
+                    date=d.get("date", ""),
+                    open=float(d.get("open", 0)),
+                    high=float(d.get("high", 0)),
+                    low=float(d.get("low", 0)),
+                    close=float(d.get("close", 0)),
+                    volume=float(d.get("volume", 0)),
+                    amount=float(d.get("amount", 0)),
+                    change_pct=float(d.get("change_pct", 0)),
+                    turn_rate=float(d.get("turn_rate", 0)),
+                ))
+            return stock_list
+        except Exception as e:
+            logger.debug(f"[{symbol}] 磁盘缓存读取失败: {e}")
+            return None
+
+    def _save_disk_cache(self, symbol: str, kline_list: List[StockData]) -> None:
+        """写入当日磁盘缓存"""
+        if self.no_cache:
+            # no_cache 模式（TDX 分析分支）：不落盘，避免污染生产流程的磁盘缓存
+            return
+        if not kline_list:
+            return
+        path = self._disk_cache_path(symbol)
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump([asdict(k) for k in kline_list], f, ensure_ascii=False)
+        except Exception as e:
+            logger.debug(f"[{symbol}] 磁盘缓存写入失败: {e}")
+
+    def _cleanup_old_kline_cache(self, keep_days: int = 2) -> None:
+        """清理旧日期的K线缓存目录（保留最近 keep_days 天）"""
+        try:
+            if not os.path.isdir(self._disk_cache_root):
+                return
+            today = datetime.now()
+            for dirname in os.listdir(self._disk_cache_root):
+                dirpath = os.path.join(self._disk_cache_root, dirname)
+                if not os.path.isdir(dirpath):
+                    continue
+                try:
+                    file_date = datetime.strptime(dirname, "%Y-%m-%d")
+                except ValueError:
+                    continue
+                if (today - file_date).days > keep_days:
+                    import shutil
+                    shutil.rmtree(dirpath, ignore_errors=True)
+                    logger.info(f"清理旧K线缓存目录: {dirname}")
+        except Exception as e:
+            logger.debug(f"清理K线缓存异常(非关键): {e}")
+
     def clear_cache(self):
-        """清空缓存"""
+        """清空内存缓存（磁盘缓存保留，跨运行复用）"""
         self._cache.clear()
         self._cache_time.clear()
-        logger.info("K线缓存已清空")
+        logger.info("K线内存缓存已清空")
+
+    def cleanup_disk_cache(self, keep_days: int = 2):
+        """手动触发磁盘缓存清理"""
+        self._cleanup_old_kline_cache(keep_days)

@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 
 from .types import StockData, ScanResult, MarketAnalysis, StrategyType
-from .config import Config
+from .config import Config, VERSION
 from ..agents.data_agent import DataAgent
 from ..agents.strategy_agent import StrategyAgent
 from ..agents.market_agent import MarketAgent
@@ -52,6 +52,7 @@ class AInvestEngine:
             )
             handler.setFormatter(formatter)
             logger.addHandler(handler)
+            logger.propagate = False
         
         return logger
     
@@ -59,6 +60,7 @@ class AInvestEngine:
         self,
         strategy: StrategyType,
         limit: int = 20,
+        as_of: Optional[str] = None,
         **kwargs
     ) -> List[ScanResult]:
         """
@@ -67,6 +69,7 @@ class AInvestEngine:
         Args:
             strategy: 策略类型
             limit: 返回结果数量限制
+            as_of: 历史扫描截止日期（YYYY-MM-DD），用于回测时防止K线前视
             **kwargs: 传递给策略的额外参数
             
         Returns:
@@ -75,8 +78,11 @@ class AInvestEngine:
         self.logger.info(f"开始执行{strategy.value}策略扫描...")
         
         # 1. 数据采集
-        market_data = self.data_agent.fetch_market_data()
-        self.logger.info(f"获取市场数据: {len(market_data)}只标的")
+        universe = kwargs.pop("universe", "tradable")
+        market_data = self.data_agent.fetch_market_data(date=as_of, universe=universe)
+        self.logger.info(f"获取市场数据: {len(market_data)}只标的 (universe={universe})")
+        if as_of is not None:
+            kwargs["as_of"] = as_of
         
         # 2. 策略执行（综合策略额外获取市场状态和权重）
         from ..core.types import StrategyType
@@ -95,13 +101,9 @@ class AInvestEngine:
                 # 直接使用缓存的子策略结果，不重新执行
                 sub_raw = getattr(comp_strategy, '_last_sub_results', {}) or {}
                 # 整理每个子策略 Top 10
-                # ── v2.6.5: 9大策略，每策略取 Top 15 ──
+                # ── 4聚合策略，每策略取 Top 15 ──
                 sub_top10: Dict[str, List] = {}
-                target_strategies = [
-                    "volume_breakout", "turnover_rank", "multi_factor",
-                    "ai_technical", "box_breakout", "ma_trend",
-                    "bottom_rebound", "consecutive_positive", "net_inflow"
-                ]
+                target_strategies = list(getattr(comp_strategy, "_strategies", {}).keys())
                 for sname in target_strategies:
                     items = []
                     for sym, strat_map in sub_raw.items():
@@ -193,7 +195,8 @@ class AInvestEngine:
         output_path = self.report_agent.generate(
             results=results,
             analysis=analysis,
-            format=format
+            format=format,
+            strategy_context=self._last_strategy_context
         )
         
         self.logger.info(f"报告已生成: {output_path}")
@@ -208,7 +211,7 @@ class AInvestEngine:
         """
         return {
             "status": "healthy",
-            "version": "2.3.0",
+            "version": VERSION,
             "timestamp": datetime.now().isoformat(),
             "config": {
                 "log_level": self.config.log_level,

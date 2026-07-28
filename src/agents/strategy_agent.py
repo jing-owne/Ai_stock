@@ -48,6 +48,10 @@ class StrategyAgent:
             self.logger.error(f"策略{strategy_type.value}未注册")
             return []
         
+        # 单策略模式：预取K线并注入指标（CompositeStrategy会自己处理）
+        if strategy_type != StrategyType.COMPOSITE:
+            self._prefetch_and_inject_indicators(strategy, market_data, as_of=kwargs.get("as_of"))
+        
         # 合并配置和参数
         params = self._get_strategy_params(strategy_type)
         params.update(kwargs)
@@ -60,6 +64,25 @@ class StrategyAgent:
         except Exception as e:
             self.logger.error(f"策略执行失败: {e}")
             return []
+    
+    def _prefetch_and_inject_indicators(self, strategy, market_data: List[StockData], as_of: Optional[str] = None):
+        """预取K线并注入指标（单策略模式）"""
+        from ..data.prefetch import prefetch_kline_indicators
+
+        symbols = list({s.symbol for s in market_data if s.amount >= 200_000_000})
+        ind, kln, cnt = prefetch_kline_indicators(
+            symbols=symbols,
+            keep_kline=True,
+            log_prefix="单策略",
+            as_of=as_of,
+        )
+        
+        if hasattr(strategy, '_indicators'):
+            strategy._indicators = ind
+        if hasattr(strategy, '_kline_cache'):
+            strategy._kline_cache = kln
+        if hasattr(strategy, '_kline_available'):
+            strategy._kline_available = cnt > 0
     
     def execute_with_context(
         self,
@@ -89,53 +112,89 @@ class StrategyAgent:
         if strategy_type == StrategyType.COMPOSITE:
             strategy = self.registry.get_strategy(strategy_type)
             if isinstance(strategy, CompositeStrategy):
-                # 重新执行一次获取上下文（CompositeStrategy 内部已缓存）
-                params = self._get_strategy_params(strategy_type)
-                params.update(kwargs)
-                # CompositeStrategy 内部会检测市场状态并使用权重
-                # 我们从配置中读取动态权重状态
-                comp_cfg = params.get("composite_strategy", {})
-                context["market_state"] = comp_cfg.get("_last_market_state", "volatile")
-                context["weights"] = comp_cfg.get("_last_weights", {
-                    "volume_surge": 0.25,
-                    "turnover_rank": 0.25,
-                    "multi_factor": 0.25,
-                    "ai_technical": 0.15,
-                    "institution": 0.10,
-                })
+                # 从策略实例直接读取（StrategyContext 访问器）
+                context["market_state"] = strategy.last_market_state
+                context["weights"] = strategy.last_weights
         
         return results, context
     
+    # 策略类型 → config.strategy 属性名 映射表（config key ≠ StrategyType 名）
+    # v2.8: 旧 config key 保留不动，避免破坏 settings.yaml 兼容性
+    _PARAM_MAP = {
+        StrategyType.VOLUME_SURGE: "volume_surge",
+        StrategyType.VOLUME_BREAKOUT: "volume_surge",     # → config.strategy.volume_surge
+        StrategyType.TURNOVER_RANK: "turnover_rank",
+        StrategyType.MULTI_FACTOR: "multi_factor",
+        StrategyType.AI_TECHNICAL: "ai_technical",
+        StrategyType.INSTITUTION: "institution",
+        StrategyType.BOX_BREAKOUT: "box_breakout",
+        StrategyType.MA_DIVERGENCE: "ma_divergence",
+        StrategyType.MA_TREND: "ma_divergence",           # → config.strategy.ma_divergence
+        StrategyType.BOTTOM_REBOUND: "bottom_rebound",
+        StrategyType.CONSECUTIVE_POSITIVE: "consecutive_positive",
+        StrategyType.NET_INFLOW: "net_inflow",
+        StrategyType.TREND_CONFIRMATION: "trend_confirmation",
+        StrategyType.RSI_OVERSOLD: "rsi_oversold",
+        StrategyType.NEW_HIGH_BREAK: "new_high_break",
+        StrategyType.SUSTAINED_UPTREND: "sustained_uptrend",
+        StrategyType.LAUNCH_FINGERPRINT: "launch_fingerprint",
+        # 4聚合策略 (v2.8)
+        StrategyType.BOTTOM: "bottom",
+        StrategyType.LAUNCH: "launch",
+        StrategyType.TREND: "trend",
+        StrategyType.MONEY: "money",
+    }
+
     def _get_strategy_params(self, strategy_type: StrategyType) -> Dict[str, Any]:
-        """获取策略配置参数"""
-        if strategy_type == StrategyType.VOLUME_SURGE:
-            return self.config.strategy.volume_surge
-        elif strategy_type == StrategyType.TURNOVER_RANK:
-            return self.config.strategy.turnover_rank
-        elif strategy_type == StrategyType.MULTI_FACTOR:
-            return self.config.strategy.multi_factor
-        elif strategy_type == StrategyType.AI_TECHNICAL:
-            return self.config.strategy.ai_technical
-        elif strategy_type == StrategyType.INSTITUTION:
-            return self.config.strategy.institution
-        elif strategy_type == StrategyType.BOX_BREAKOUT:
-            return self.config.strategy.box_breakout
-        elif strategy_type == StrategyType.MA_DIVERGENCE:
-            return self.config.strategy.ma_divergence
-        elif strategy_type == StrategyType.COMPOSITE:
-            # 综合策略需要所有子策略的配置
+        """获取策略配置参数（映射表驱动，易于扩展新策略）"""
+        # 综合策略：聚合所有子策略配置
+        if strategy_type == StrategyType.COMPOSITE:
+            cfg = self.config.strategy
+            volume_cfg = getattr(cfg, "volume_breakout", getattr(cfg, "volume_surge", {}))
+            ma_cfg = getattr(cfg, "ma_trend", getattr(cfg, "ma_divergence", {}))
             return {
-                "volume_surge": self.config.strategy.volume_surge,
-                "turnover_rank": self.config.strategy.turnover_rank,
-                "multi_factor": self.config.strategy.multi_factor,
-                "ai_technical": self.config.strategy.ai_technical,
-                "institution": self.config.strategy.institution,
-                "box_breakout": self.config.strategy.box_breakout,
-                "ma_divergence": self.config.strategy.ma_divergence,
-                "composite_strategy": self.config.strategy.composite_strategy,
-                "fundamental_filter": self.config.strategy.fundamental_filter,
+                "volume_surge": getattr(cfg, "volume_surge", {}),
+                "volume_breakout": volume_cfg,
+                "turnover_rank": getattr(cfg, "turnover_rank", {}),
+                "multi_factor": getattr(cfg, "multi_factor", {}),
+                "ai_technical": getattr(cfg, "ai_technical", {}),
+                "institution": getattr(cfg, "institution", {}),
+                "box_breakout": getattr(cfg, "box_breakout", {}),
+                "ma_divergence": getattr(cfg, "ma_divergence", {}),
+                "ma_trend": ma_cfg,
+                "rsi_oversold": getattr(cfg, "rsi_oversold", {}),
+                "new_high_break": getattr(cfg, "new_high_break", {}),
+                "consecutive_positive": getattr(cfg, "consecutive_positive", {}),
+                "bottom_rebound": getattr(cfg, "bottom_rebound", {}),
+                "net_inflow": getattr(cfg, "net_inflow", {}),
+                "trend_confirmation": getattr(cfg, "trend_confirmation", {}),
+                "composite_strategy": getattr(cfg, "composite_strategy", {}),
+                "fundamental_filter": getattr(cfg, "fundamental_filter", {}),
+                "launch_fingerprint": getattr(cfg, "launch_fingerprint", {}),
+                "bottom": getattr(cfg, "bottom", {}),
+                "launch": getattr(cfg, "launch", {}),
+                "trend": getattr(cfg, "trend", {}),
+                "money": getattr(cfg, "money", {}),
             }
-        return {}
+
+        # 单策略：从映射表取属性名，配置缺失时返回空字典（向后兼容）
+        attr = self._PARAM_MAP.get(strategy_type)
+        if attr is None:
+            return {}
+        cfg = getattr(self.config.strategy, attr, {})
+        params = dict(cfg)
+        params[attr] = cfg
+        alias = {
+            "volume_surge": "volume_breakout",
+            "ma_divergence": "ma_trend",
+            "rsi_oversold": "bottom_rebound",
+            "new_high_break": "volume_breakout",
+            "sustained_uptrend": "trend_confirmation",
+            "institution": "multi_factor",
+        }.get(attr)
+        if alias:
+            params[alias] = cfg
+        return params
     
     def backtest(
         self,

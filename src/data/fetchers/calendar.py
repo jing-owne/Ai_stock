@@ -2,6 +2,8 @@
 import logging
 from typing import List, Dict
 
+from ...common.timeout_utils import call_with_timeout
+
 logger = logging.getLogger("AInvest.CalendarFetcher")
 
 
@@ -44,7 +46,7 @@ def get_ipo_calendar(max_days: int = 7) -> List[Dict]:
     try:
         import akshare as ak
         from datetime import datetime, timedelta
-        df = ak.stock_ipo_ths()
+        df = call_with_timeout(ak.stock_ipo_ths, timeout=8, default=None, label="stock_ipo_ths")
         if df is None or df.empty:
             return []
         today = datetime.now().date()
@@ -126,14 +128,13 @@ def get_bond_calendar(max_days: int = 7) -> List[Dict]:
     import akshare as ak
     import pandas as pd
     from datetime import datetime, timedelta
-    import time
 
     today = datetime.now().date()
     cutoff = today + timedelta(days=max_days)
 
     # 第1源: bond_zh_cov_info_ths
     try:
-        df = ak.bond_zh_cov_info_ths()
+        df = call_with_timeout(ak.bond_zh_cov_info_ths, timeout=8, default=None, label="bond_zh_cov_info_ths")
         if df is not None and not df.empty and '申购日期' in df.columns:
             bond_list = []
             for _, row in df.iterrows():
@@ -167,44 +168,41 @@ def get_bond_calendar(max_days: int = 7) -> List[Dict]:
     except Exception as e:
         logger.debug(f"bond_zh_cov_info_ths 失败: {e}")
 
-    # 第2源: bond_cov_comparison
-    for attempt in range(2):
-        try:
-            time.sleep(1)
-            df = ak.bond_cov_comparison()
-            if df is not None and not df.empty and '申购日期' in df.columns:
-                bond_list = []
-                for _, row in df.iterrows():
-                    apply_date_str = str(row.get('申购日期', ''))
-                    if not apply_date_str or apply_date_str in ('nan', 'NaT', ''):
-                        continue
-                    try:
-                        parsed_date = pd.to_datetime(apply_date_str, format='%Y%m%d', errors='coerce').date()
-                    except Exception:
-                        continue
-                    if pd.isna(parsed_date) or parsed_date < today or parsed_date > cutoff:
-                        continue
-                    bond_list.append({
-                        'bond_name': str(row.get('转债名称', '')),
-                        'bond_code': str(row.get('转债代码', '')),
-                        'stock_name': str(row.get('正股名称', '')),
-                        'apply_date': parsed_date.strftime('%m-%d'),
-                        'apply_date_full': parsed_date.strftime('%Y-%m-%d'),
-                        'conv_price': _safe_str(row, '转股价', '待定'),
-                        'rating': _safe_str(row, '评级', '待查'),
-                        'source': '东方财富',
-                    })
-                if bond_list:
-                    bond_list.sort(key=lambda x: x.get('apply_date_full', ''))  # 升序
-                    logger.info(f"获取可转债日历(东财): 未来{max_days}天共{len(bond_list)}只")
-                    return bond_list
-            break
-        except Exception as e:
-            logger.debug(f"bond_cov_comparison 第{attempt+1}次失败: {e}")
+    # 第2源: bond_cov_comparison（超时即降级到第3源，不再重试）
+    try:
+        df = call_with_timeout(ak.bond_cov_comparison, timeout=8, default=None, label="bond_cov_comparison")
+        if df is not None and not df.empty and '申购日期' in df.columns:
+            bond_list = []
+            for _, row in df.iterrows():
+                apply_date_str = str(row.get('申购日期', ''))
+                if not apply_date_str or apply_date_str in ('nan', 'NaT', ''):
+                    continue
+                try:
+                    parsed_date = pd.to_datetime(apply_date_str, format='%Y%m%d', errors='coerce').date()
+                except Exception:
+                    continue
+                if pd.isna(parsed_date) or parsed_date < today or parsed_date > cutoff:
+                    continue
+                bond_list.append({
+                    'bond_name': str(row.get('转债名称', '')),
+                    'bond_code': str(row.get('转债代码', '')),
+                    'stock_name': str(row.get('正股名称', '')),
+                    'apply_date': parsed_date.strftime('%m-%d'),
+                    'apply_date_full': parsed_date.strftime('%Y-%m-%d'),
+                    'conv_price': _safe_str(row, '转股价', '待定'),
+                    'rating': _safe_str(row, '评级', '待查'),
+                    'source': '东方财富',
+                })
+            if bond_list:
+                bond_list.sort(key=lambda x: x.get('apply_date_full', ''))  # 升序
+                logger.info(f"获取可转债日历(东财): 未来{max_days}天共{len(bond_list)}只")
+                return bond_list
+    except Exception as e:
+        logger.debug(f"bond_cov_comparison 失败: {e}")
 
     # 第3源: stock_ipo_ths 兜底
     try:
-        df3 = ak.stock_ipo_ths()
+        df3 = call_with_timeout(ak.stock_ipo_ths, timeout=8, default=None, label="stock_ipo_ths_bond")
         if df3 is not None and not df3.empty:
             from datetime import datetime as dt
             bond_list = []

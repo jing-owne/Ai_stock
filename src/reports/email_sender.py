@@ -44,6 +44,7 @@ class EmailSender:
         self.config = config
         self.logger = logging.getLogger("AInvest.EmailSender")
         self.data_fetcher = DataFetcher()
+        self.last_subject = ""
         self._smtp = SMTPSender(
             smtp_server=config.smtp_server,
             smtp_port=config.smtp_port,
@@ -251,7 +252,7 @@ class EmailSender:
             rendered = format_email_html(html_content, subject)
         
         recipients = to_emails or self.config.to_emails
-        cc_list = cc_emails or self.config.cc_emails
+        cc_list = []  # 2026-07-15 暂时禁用抄送，仅保留主收件人（不调整 config.cc_emails 规则）
         if not recipients:
             self.logger.error("没有配置收件人")
             return False
@@ -294,7 +295,9 @@ class EmailSender:
         """
         # 构建邮件主题（新格式）
         date_str = datetime.now().strftime('%Y-%m-%d')
-        subject = f"【Marcus策略小助手】{date_str} 动态策略报告"
+        strategy_label = (strategy_name or "动态策略").strip()
+        subject = f"【Marcus策略小助手】{date_str} {strategy_label}报告"
+        self.last_subject = subject
         
         # 生成完整的邮件内容
         if stock_results:
@@ -304,7 +307,7 @@ class EmailSender:
         
         # 使用配置中的收件人
         to_emails = self.config.to_emails if self.config.to_emails else []
-        cc_emails = self.config.cc_emails if self.config.cc_emails else []
+        cc_emails = []  # 暂时禁用抄送
         
         self.logger.info(f"准备发送邮件:")
         self.logger.info(f"  主题: {subject}")

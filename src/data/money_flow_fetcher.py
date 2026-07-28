@@ -33,6 +33,10 @@ class MoneyFlowFetcher:
         self.max_workers = max_workers
         self.delay_per_request = delay_per_request
         self._cache: Dict[str, int] = {}  # symbol → consecutive_inflow_days
+        self._request_timeout = 3  # 单次请求超时 3s
+        self._circuit_threshold = 3  # 连续 3 次失败 → 熔断
+        self._consecutive_failures = 0  # 连续失败计数
+        self._circuit_open = False  # 熔断状态
 
     @staticmethod
     def make_secid(symbol: str) -> str:
@@ -51,6 +55,10 @@ class MoneyFlowFetcher:
         if symbol in self._cache:
             return self._cache[symbol]
 
+        # 熔断已开启：直接跳过，避免逐只慢失败
+        if self._circuit_open:
+            return None
+
         try:
             secid = self.make_secid(symbol)
             params = {
@@ -63,15 +71,17 @@ class MoneyFlowFetcher:
 
             session = requests.Session()
             session.headers.update(HEADERS)
-            resp = session.get(MONEYFLOW_URL, params=params, timeout=8, verify=False)
+            resp = session.get(MONEYFLOW_URL, params=params, timeout=self._request_timeout, verify=False)
             session.close()
 
             data = resp.json()
             if not data or data.get("rc") != 0:
+                self._record_failure()
                 return None
 
             klines = data.get("data", {}).get("klines", [])
             if not klines:
+                self._record_failure()
                 return None
 
             # 解析主力净流入，从最近往回统计连续净流入天数
@@ -85,12 +95,24 @@ class MoneyFlowFetcher:
                     else:
                         break  # 遇到流出即停止
 
+            # 成功：重置熔断计数
+            self._consecutive_failures = 0
             self._cache[symbol] = consecutive
             return consecutive
 
         except Exception as e:
             logger.debug(f"资金流向 {symbol} 获取失败: {e}")
+            self._record_failure()
             return None
+
+    def _record_failure(self) -> None:
+        """累计失败，达到阈值则熔断"""
+        self._consecutive_failures += 1
+        if self._consecutive_failures >= self._circuit_threshold and not self._circuit_open:
+            self._circuit_open = True
+            logger.warning(
+                f"资金流向接口连续失败 {self._circuit_threshold} 次，已熔断跳过剩余标的"
+            )
 
     def fetch_batch(self, symbols: List[str]) -> Dict[str, int]:
         """

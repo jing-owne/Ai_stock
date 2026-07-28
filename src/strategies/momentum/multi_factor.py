@@ -55,10 +55,21 @@ class MultiFactorStrategy(BaseStrategy):
                 continue
 
             indicators = self._indicators.get(stock.symbol)
-            if indicators:
-                technical = calc_technical_score(indicators)
+            # ── v2.6.10: PE从StockData获取（aggregator不含基本面数据）──
+            pe_ratio = stock.pe_ratio
+            if pe_ratio is not None and pe_ratio < 0:
+                # PE为负(亏损) → 技术面基础分降至1%
+                if indicators:
+                    technical = calc_technical_score(indicators) * 0.01
+                else:
+                    technical = 40.0 * 0.01
+                has_neg_pe = True
             else:
-                technical = 40.0
+                if indicators:
+                    technical = calc_technical_score(indicators)
+                else:
+                    technical = 40.0
+                has_neg_pe = False
 
             # ── 基础多因子 ──
             factors = {
@@ -101,8 +112,11 @@ class MultiFactorStrategy(BaseStrategy):
             if total < min_score:
                 continue
 
+            # ── v2.6.9: PE为负 → 信号加风险标注 ─────────────────────
             signals = []
             sfx = "「多因子」"
+            if has_neg_pe:
+                signals.append("⚠️亏损标的(PE为负)")
             if factors["volume"] >= 80:
                 signals.append("量能充沛" + sfx)
             if factors["price"] >= 80:

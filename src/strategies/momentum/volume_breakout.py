@@ -35,6 +35,17 @@ class VolumeBreakoutStrategy(BaseStrategy):
     def strategy_type(self) -> StrategyType:
         return StrategyType.VOLUME_BREAKOUT
 
+    def _calculate_score(self, volume_ratio: float, change_pct: float, params: Dict[str, Any]) -> float:
+        """Backward-compatible score helper used by existing unit tests."""
+        min_volume_ratio = params.get("min_volume_ratio", 1.3)
+        min_change = params.get("min_price_change", -5.0)
+        if volume_ratio < min_volume_ratio or change_pct < min_change:
+            return 0.0
+        volume_score = min(volume_ratio / max(min_volume_ratio, 0.1) * 35, 45)
+        change_score = min(max(change_pct, 0) * 5, 35)
+        base_score = 20
+        return round(min(base_score + volume_score + change_score, 100), 1)
+
     def execute(
         self,
         market_data: List[StockData],
@@ -45,9 +56,9 @@ class VolumeBreakoutStrategy(BaseStrategy):
         min_change = cfg.get("min_price_change", -5.0)
         max_change = cfg.get("max_price_change", 7.0)
         min_amount = cfg.get("min_amount", 100_000_000)
-        max_consecutive_up = cfg.get("max_consecutive_up", 10)  # was 5
-        max_position_20d = cfg.get("max_position_20d", 99)  # was 95
-        max_amplitude = cfg.get("max_amplitude", 15.0)  # was 12.0
+        max_consecutive_up = cfg.get("max_consecutive_up", 10)
+        max_position_20d = cfg.get("max_position_20d", 99)
+        max_amplitude = cfg.get("max_amplitude", 15.0)
 
         results = []
         max_amount = max((s.amount for s in market_data), default=1)
@@ -88,8 +99,8 @@ class VolumeBreakoutStrategy(BaseStrategy):
                 continue
 
             # ── 突破检测 (原 new_high_break 逻辑) ──
-            breakout_20d = indicators.get("breakout_20d", False)
-            breakout_60d = indicators.get("breakout_60d", False)
+            breakout_20d = indicators.get("breakout_20d_high", False) or indicators.get("breakout_20d", False)
+            breakout_60d = indicators.get("breakout_60d_high", False) or indicators.get("breakout_60d", False)
             is_breakout = breakout_20d or breakout_60d
 
             # ── 评分 ──

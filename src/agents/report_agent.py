@@ -4,6 +4,7 @@
 """
 import os
 import logging
+import re
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from pathlib import Path
@@ -64,14 +65,20 @@ class ReportAgent:
         )
         
         # 生成报告
-        timestamp = datetime.now().strftime("%y-%m-%d %H-%M")
+        timestamp = datetime.now().strftime("%y-%m-%d %H-%M-%S")
+        ctx = strategy_context or {}
+        label_suffix = ""
+        if ctx.get("mode_label"):
+            safe_label = re.sub(r"[^\w\u4e00-\u9fff.-]+", "_", str(ctx["mode_label"])).strip("_")
+            if safe_label:
+                label_suffix = f"_{safe_label}"
         
         if format == "html":
-            filename = f"scan_report_{timestamp}.html"
+            filename = f"scan_report{label_suffix}_{timestamp}.html"
         elif format == "markdown":
-            filename = f"scan_report_{timestamp}.md"
+            filename = f"scan_report{label_suffix}_{timestamp}.md"
         elif format == "json":
-            filename = f"scan_report_{timestamp}.json"
+            filename = f"scan_report{label_suffix}_{timestamp}.json"
         else:
             raise ValueError(f"不支持的格式: {format}")
         
@@ -105,47 +112,52 @@ class ReportAgent:
         """
         from datetime import datetime as dt
         from ..data.fetcher import DataFetcher
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
         lines = []
         fetcher = DataFetcher()
 
+        # ── 并发获取所有外部数据（避免串行累加耗时）──
+        # 每日一言 / 财经新闻 / 市场态势 / IPO日历 / 可转债日历 互相独立，并发拉取
+        # 总耗时 = max(单个) 而非 sum，大幅缩短邮件摘要生成时间
+        def _safe(fn, key):
+            try:
+                return (key, fn())
+            except Exception as e:
+                self.logger.debug(f"并发获取 {key} 失败: {e}")
+                return (key, None)
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [
+                executor.submit(_safe, fetcher.get_daily_quote, "quote"),
+                executor.submit(_safe, fetcher.fetch_all_news, "news"),
+                executor.submit(_safe, fetcher.get_market_overview, "market"),
+                executor.submit(_safe, lambda: fetcher.get_ipo_calendar(max_days=7), "ipo"),
+                executor.submit(_safe, lambda: fetcher.get_bond_calendar(max_days=7), "bond"),
+            ]
+            data_results = {}
+            for fut in as_completed(futures):
+                k, v = fut.result()
+                data_results[k] = v
+
+        daily_quote = data_results.get("quote") or "暂无"
+        news_list = data_results.get("news") or []
+        overview = data_results.get("market") or {}
+        ipo_list = data_results.get("ipo") or []
+        bond_list = data_results.get("bond") or []
+
         # ── 每日一言 ──────────────────────────────────
         lines.append("【每日一言】")
         lines.append("")
-        daily_quote = fetcher.get_daily_quote()
         lines.append(f"💡 {daily_quote}")
         lines.append("")
         lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         lines.append("")
 
-        # ── 大盘指数（暂时禁用，保留获取模块） ──────────
-        # lines.append("【大盘指数】")
-        # lines.append("")
-        # try:
-        #     overview = fetcher.get_market_overview()
-        #     if overview.get('sh_index'):
-        #         sh = overview['sh_index']
-        #         arrow = "↑" if sh['change_pct'] >= 0 else "↓"
-        #         lines.append(f"上证指数 {sh['price']:.1f} {sh['change_pct']:+.2f}% {arrow}")
-        #     if overview.get('sz_index'):
-        #         sz = overview['sz_index']
-        #         arrow = "↑" if sz['change_pct'] >= 0 else "↓"
-        #         lines.append(f"深证成指 {sz['price']:.1f} {sz['change_pct']:+.2f}% {arrow}")
-        #     if overview.get('cyb_index'):
-        #         cyb = overview['cyb_index']
-        #         arrow = "↑" if cyb['change_pct'] >= 0 else "↓"
-        #         lines.append(f"创业板指 {cyb['price']:.1f} {cyb['change_pct']:+.2f}% {arrow}")
-        # except Exception as e:
-        #     self.logger.warning(f"获取大盘指数失败: {e}")
-        #     lines.append("大盘指数获取失败")
-        # lines.append("")
-        # lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        # lines.append("")
 
         # ── 财经动态 ──────────────────────────────────
         lines.append("【财经动态】")
         lines.append("")
-        news_list = fetcher.fetch_all_news()
         if news_list:
             for i, news in enumerate(news_list[:10], 1):
                 title = news.get('title', '')
@@ -296,10 +308,8 @@ class ReportAgent:
         stance, stance_desc = stance_map.get(market_state, stance_map["volatile"]) if market_state else stance_map["volatile"]
         lines.append(f"🎯 市场立场: {stance}")
 
-        # 获取市场宏观数据
+        # 获取市场宏观数据（已并发获取，overview 可能为空 dict 表示失败）
         try:
-            overview = fetcher.get_market_overview()
-
             # 沪深300
             if overview.get('csi300'):
                 csi = overview['csi300']
@@ -328,9 +338,14 @@ class ReportAgent:
                 amt_str = f"{total_amt/1e12:.2f}万亿" if total_amt >= 1e12 else f"{total_amt/1e8:.0f}亿"
                 lines.append(f"💹 市场成交:  {amt_str}")
 
+            # 市场态势数据为空时降级：用扫描结果估算
+            if not overview and results:
+                up_count_all = sum(1 for r in results if r.data and r.data.change_pct > 0)
+                down_count_all = sum(1 for r in results if r.data and r.data.change_pct < 0)
+                lines.append(f"📊 涨跌家数(样本):  上涨 {up_count_all} / 下跌 {down_count_all}")
+
         except Exception as e:
-            self.logger.warning(f"获取市场态势数据失败，使用扫描结果估算: {e}")
-            # 降级：使用扫描结果中的数据
+            self.logger.warning(f"市场态势数据构建失败，使用扫描结果估算: {e}")
             if results:
                 up_count_all = sum(1 for r in results if r.data and r.data.change_pct > 0)
                 down_count_all = sum(1 for r in results if r.data and r.data.change_pct < 0)
@@ -369,7 +384,6 @@ class ReportAgent:
         lines.append("")
 
         # ── 打新日历（新股） ──
-        ipo_list = fetcher.get_ipo_calendar(max_days=7)
         if ipo_list:
             lines.append(f"📋 近期新股申购（未来7天）：")
             for ipo in ipo_list:
@@ -380,7 +394,6 @@ class ReportAgent:
         lines.append("")
 
         # ── 可转债日历 ──
-        bond_list = fetcher.get_bond_calendar(max_days=7)
         if bond_list:
             # 按申购日期升序：日期最新的在最上面（与新股一致）
             bond_list.sort(key=lambda x: x.get('apply_date_full', x.get('apply_date', '')))
@@ -416,11 +429,11 @@ class ReportAgent:
         Returns:
             发送是否成功
         """
-        # 生成报告文件
-        report_path = self.generate(results, analysis, format)
-        
         # 策略上下文（含子策略 Top 10）
         ctx = strategy_context or {}
+        
+        # 生成报告文件
+        report_path = self.generate(results, analysis, format, strategy_context=ctx)
         
         # 同时生成Markdown版本作为附件（含各子策略 Top 10）
         md_path = None
@@ -440,6 +453,18 @@ class ReportAgent:
             market_state=ctx.get("market_state"),
             strategy_weights=ctx.get("weights")
         )
+        if ctx.get("mode_label"):
+            summary = f"【策略模式】{ctx['mode_label']}\n\n{summary}"
+        tracking_strategy_name = strategy_name
+        tracking_session = None
+        try:
+            from ..backtest.tracker import classify_trading_session
+            tracking_session, _ = classify_trading_session()
+            if ctx.get("mode_label") and tracking_session != "regular":
+                tracking_strategy_name = f"非交易时间观察-{strategy_name}"
+                summary = f"【非交易时间观察】本次结果不写入收益跟踪、不进入回测样本。\n\n{summary}"
+        except Exception as e:
+            self.logger.debug(f"交易时间门禁检查失败，继续发送邮件: {e}")
         
         # 准备附件列表
         attachments = [md_path] if md_path else []
@@ -448,10 +473,31 @@ class ReportAgent:
         success = self.email_sender.send_report(
             results_summary=summary,
             html_content=html_content,
-            strategy_name=strategy_name,
+            strategy_name=tracking_strategy_name,
             attachments=attachments
         )
-        
+
+        # ── 跟踪钩子：邮件发送成功后，把本次推荐标的 + 发送时价格 追加记录 ──
+        # 仅记录 composite 扫描结果（含 mode_label 区分新旧策略），失败不影响邮件。
+        # 非交易时间由 RecommendationTracker.record() 门禁拦截，不进入收益样本。
+        try:
+            if ctx.get("mode_label"):
+                from ..backtest.tracker import RecommendationTracker
+                from ..backtest.models import StrategyMode
+                mode = StrategyMode.from_label(ctx.get("mode_label", "")).value
+                RecommendationTracker().record(
+                    results,
+                    mode=mode,
+                    hold_style="fast",
+                    strategy_name=strategy_name,
+                    email_subject=getattr(self.email_sender, "last_subject", ""),
+                    email_sent=success,
+                    report_path=report_path,
+                    md_attachment_path=md_path or "",
+                )
+        except Exception as e:
+            self.logger.warning(f"推荐跟踪记录失败(不影响邮件): {e}")
+
         if success:
             self.logger.info(f"报告已发送邮件: {report_path}")
             if md_path:

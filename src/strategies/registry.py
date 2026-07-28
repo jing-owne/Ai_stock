@@ -1,14 +1,19 @@
 """
-策略注册表
+策略注册表 (v2.8)
 
-所有策略均在此注册，支持独立增删。
-10大策略（v2.6.8）+ 1个综合策略。
+4聚合策略 + 综合策略。旧10策略保留实例注册（向后兼容），旧枚举映射保持原子策略行为。
 """
 from typing import Dict, Type
 from ..core.types import StrategyType
 
 from .base import BaseStrategy
 from .composite_strategy import CompositeStrategy
+
+# 4个聚合策略 (v2.8 Phase 1)
+from .aggregated.bottom_strategy import BottomStrategy
+from .aggregated.launch_strategy import LaunchStrategy
+from .aggregated.trend_strategy import TrendStrategy
+from .aggregated.money_strategy import MoneyStrategy
 
 # 动量类
 from .momentum.volume_breakout import VolumeBreakoutStrategy
@@ -23,6 +28,7 @@ from .technical.ai_technical import AITechnicalStrategy
 from .technical.box_breakout import BoxBreakoutStrategy
 from .technical.ma_trend import MATrendStrategy
 from .technical.bottom_rebound import BottomReboundStrategy
+from .technical.launch_fingerprint_strategy import LaunchFingerprintStrategy
 
 
 class StrategyRegistry:
@@ -47,10 +53,17 @@ class StrategyRegistry:
         cls._strategies[StrategyType.CONSECUTIVE_POSITIVE] = ConsecutivePositiveStrategy()
         cls._strategies[StrategyType.NET_INFLOW] = NetInflowStrategy()
         cls._strategies[StrategyType.TREND_CONFIRMATION] = TrendConfirmationStrategy()
-        # 综合策略
+        cls._strategies[StrategyType.LAUNCH_FINGERPRINT] = LaunchFingerprintStrategy()
+        # ── 综合策略 ──
         cls._strategies[StrategyType.COMPOSITE] = CompositeStrategy()
 
-        # ── 向后兼容映射 ──
+        # ── 新增：4个聚合策略（v2.8 Phase 1）──
+        cls._strategies[StrategyType.BOTTOM] = BottomStrategy()
+        cls._strategies[StrategyType.LAUNCH] = LaunchStrategy()
+        cls._strategies[StrategyType.TREND] = TrendStrategy()
+        cls._strategies[StrategyType.MONEY] = MoneyStrategy()
+
+        # ── 向后兼容映射保留旧原子行为，避免 legacy 对照组被新聚合策略覆盖 ──
         cls._strategies[StrategyType.VOLUME_SURGE] = cls._strategies[StrategyType.VOLUME_BREAKOUT]
         cls._strategies[StrategyType.INSTITUTION] = cls._strategies[StrategyType.MULTI_FACTOR]
         cls._strategies[StrategyType.MA_DIVERGENCE] = cls._strategies[StrategyType.MA_TREND]
@@ -85,11 +98,9 @@ class StrategyRegistry:
         """列出活跃策略（排除向后兼容的重复映射）"""
         cls.initialize()
         active_types = {
-            StrategyType.VOLUME_BREAKOUT, StrategyType.TURNOVER_RANK,
-            StrategyType.MULTI_FACTOR, StrategyType.AI_TECHNICAL,
-            StrategyType.BOX_BREAKOUT, StrategyType.MA_TREND,
-            StrategyType.BOTTOM_REBOUND, StrategyType.CONSECUTIVE_POSITIVE,
-            StrategyType.NET_INFLOW, StrategyType.TREND_CONFIRMATION,
+            # 4聚合策略 (v2.8)
+            StrategyType.BOTTOM, StrategyType.LAUNCH,
+            StrategyType.TREND, StrategyType.MONEY,
             StrategyType.COMPOSITE,
         }
         return {k: v for k, v in cls._strategies.items() if k in active_types}

@@ -48,12 +48,13 @@ class DataAgent:
         self._session.headers.update(self.EASTMONEY_HEADERS)
         # 复用 KlineFetcher 获取历史K线（已处理限频+连接复用问题）
         from ..data.kline_fetcher import KlineFetcher
-        self._kline_fetcher = KlineFetcher(max_workers=8, delay_per_request=0.02)
+        self._kline_fetcher = KlineFetcher(max_workers=8, delay_per_request=0.015)
 
     def fetch_market_data(
         self,
         date: Optional[str] = None,
-        include_index: bool = False
+        include_index: bool = False,
+        universe: str = "tradable"
     ) -> List[StockData]:
         """
         获取市场标的数据（真实数据）
@@ -61,6 +62,7 @@ class DataAgent:
         Args:
             date: 日期 (YYYY-MM-DD)，默认今天
             include_index: 是否包含指数
+            universe: 标的池，"tradable"(全市场可交易) 或 "holdings"(持仓)
 
         Returns:
             StockData列表
@@ -68,7 +70,8 @@ class DataAgent:
         import time as time_module
         func_start = time_module.time()
         func_start_dt = datetime.now()
-        self.logger.info(f"[时间] fetch_market_data 开始 - {func_start_dt.strftime('%H:%M:%S.%f')[:-3]}")
+        self._current_universe = universe
+        self.logger.info(f"[时间] fetch_market_data 开始 (universe={universe}) - {func_start_dt.strftime('%H:%M:%S.%f')[:-3]}")
         
         date = date or datetime.now().strftime("%Y-%m-%d")
 
@@ -163,11 +166,12 @@ class DataAgent:
 
         func_start = time_module.time()
         func_start_dt = datetime.now()
-        self.logger.info(f"[时间] _fetch_from_tencent 开始 - {func_start_dt.strftime('%H:%M:%S.%f')[:-3]}")
+        universe = getattr(self, "_current_universe", "tradable")
+        self.logger.info(f"[时间] _fetch_from_tencent 开始 (universe={universe}) - {func_start_dt.strftime('%H:%M:%S.%f')[:-3]}")
 
         # ── 步骤1: 获取预过滤代码列表 ──
         cache_start = time_module.time()
-        filtered_codes = get_daily_filtered_codes()
+        filtered_codes = get_daily_filtered_codes(universe=universe)
         cache_elapsed = time_module.time() - cache_start
         self.logger.info(
             f"[时间] 获取预过滤代码列表完成 - 耗时: {cache_elapsed:.2f}秒, "
@@ -301,6 +305,7 @@ class DataAgent:
                 amount=amount_yuan,
                 change_pct=round(pct, 2),
                 turn_rate=round(float(parts[38]) if parts[38] else 0, 2),
+                pe_ratio=float(parts[39]) if len(parts) > 39 and parts[39] else None,
             )
         except (ValueError, IndexError):
             return None

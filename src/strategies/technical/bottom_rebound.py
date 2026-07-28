@@ -89,7 +89,7 @@ class BottomReboundStrategy(BaseStrategy):
 
                     # 月线MACD
                     monthly_close = resample_to_monthly(close_arr)
-                    if len(monthly_close) >= 35:
+                    if len(monthly_close) >= 26:
                         macd_data = calc_macd(monthly_close)
                         macd_hist = macd_data["macd"][-1]
                         macd_strong = not np.isnan(macd_hist) and macd_hist > 0.618

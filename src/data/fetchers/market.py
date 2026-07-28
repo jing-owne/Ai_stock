@@ -2,6 +2,8 @@
 import logging
 from typing import Dict, Any
 
+from ...common.timeout_utils import call_with_timeout
+
 logger = logging.getLogger("AInvest.MarketFetcher")
 
 
@@ -12,7 +14,8 @@ def get_market_overview() -> Dict[str, Any]:
     }
     try:
         import akshare as ak
-        df = ak.stock_zh_a_spot_em()
+        # akshare 内部走 push2.eastmoney 子域名，失败重试耗时长，用超时熔断包裹
+        df = call_with_timeout(ak.stock_zh_a_spot_em, timeout=8, default=None, label="stock_zh_a_spot_em")
         if df is not None and not df.empty:
             up = int((df['涨跌幅'] > 0).sum()) if '涨跌幅' in df.columns else 0
             down = int((df['涨跌幅'] < 0).sum()) if '涨跌幅' in df.columns else 0
@@ -20,7 +23,9 @@ def get_market_overview() -> Dict[str, Any]:
             result['up_count'] = up
             result['down_count'] = down
             result['total_amount'] = total_amt
-        logger.info(f"获取市场态势: 上涨{up}家, 下跌{down}家, 总成交额{total_amt/1e12:.2f}万亿")
+            logger.info(f"获取市场态势: 上涨{up}家, 下跌{down}家, 总成交额{total_amt/1e12:.2f}万亿")
+        else:
+            logger.warning("市场态势数据获取失败/超时，使用默认值")
     except ImportError:
         logger.warning("akshare未安装，无法获取市场态势数据")
     except Exception as e:
@@ -28,7 +33,7 @@ def get_market_overview() -> Dict[str, Any]:
 
     try:
         import akshare as ak
-        idx_df = ak.stock_zh_index_spot_em()
+        idx_df = call_with_timeout(ak.stock_zh_index_spot_em, timeout=8, default=None, label="stock_zh_index_spot_em")
         if idx_df is not None and not idx_df.empty:
             for idx_name, key in [('上证指数', 'sh_index'), ('深证成指', 'sz_index'),
                                    ('沪深300', 'csi300'), ('创业板指', 'cyb_index')]:

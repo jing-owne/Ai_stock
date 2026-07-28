@@ -3,11 +3,28 @@
 支持YAML配置、fail-fast验证、环境变量覆盖
 """
 import os
+import json
 import yaml
 from pathlib import Path
 from typing import Any, Dict, Optional
 from dataclasses import dataclass, field
 from copy import deepcopy
+
+VERSION = "2.8.0"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def load_runtime_config(config_path: Optional[str] = None) -> Dict[str, Any]:
+    """Load runtime switches from strategy_config.json using a stable project-root path."""
+    path = Path(config_path) if config_path else PROJECT_ROOT / "strategy_config.json"
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
 
 
 @dataclass
@@ -79,6 +96,91 @@ class StrategyConfig:
         "max_price_change": 7.0,
         "min_amount": 100_000_000,
         "min_score": 35,
+    })
+
+    rsi_oversold: Dict[str, Any] = field(default_factory=lambda: {
+        "max_rsi": 35,
+        "min_rsi_divergence": True,
+        "min_price_change": 1.0,
+        "max_price_change": 5.0,
+        "min_amount": 100_000_000,
+        "min_volume_ratio": 1.2,
+        "min_score": 40,
+    })
+
+    new_high_break: Dict[str, Any] = field(default_factory=lambda: {
+        "high_period": 20,
+        "min_breakout_pct": 0.5,
+        "min_price_change": 1.0,
+        "max_price_change": 7.0,
+        "min_amount": 150_000_000,
+        "min_volume_ratio": 1.3,
+        "min_score": 45,
+    })
+
+    consecutive_positive: Dict[str, Any] = field(default_factory=lambda: {
+        "min_consecutive_days": 3,
+        "max_consecutive_days": 7,
+        "max_daily_change": 3.0,
+        "min_cumulative_change": 2.0,
+        "max_cumulative_change": 15.0,
+        "min_amount": 100_000_000,
+        "min_score": 40,
+    })
+
+    bottom_rebound: Dict[str, Any] = field(default_factory=lambda: {
+        "min_price_change": -5.0,
+        "min_amount": 100_000_000,
+        "min_score": 30,
+    })
+
+    net_inflow: Dict[str, Any] = field(default_factory=lambda: {
+        "min_price_change": -5.0,
+        "max_price_change": 7.0,
+        "min_amount": 100_000_000,
+        "min_score": 1,
+    })
+
+    trend_confirmation: Dict[str, Any] = field(default_factory=lambda: {
+        "min_consecutive_up": 3,
+        "min_rsi": 55,
+        "min_price_change": 0.5,
+        "max_price_change": 9999.0,
+        "min_amount": 100_000_000,
+        "min_score": 20,
+    })
+
+    launch_fingerprint: Dict[str, Any] = field(default_factory=lambda: {
+        "min_score": 40,
+        "source": "sina",
+        "max_pullback_prob": 60,
+    })
+
+    bottom: Dict[str, Any] = field(default_factory=lambda: {
+        "min_score": 50,
+        "rsi_threshold": 35,
+        "min_consecutive_days": 3,
+        "max_consecutive_days": 7,
+    })
+
+    launch: Dict[str, Any] = field(default_factory=lambda: {
+        "min_score": 55,
+        "min_volume_ratio": 2.0,
+        "min_box_range": 3.0,
+        "min_breakout_pct": 0.5,
+        "fingerprint_min_score": 40,
+    })
+
+    trend: Dict[str, Any] = field(default_factory=lambda: {
+        "min_score": 60,
+        "min_rsi": 55,
+        "min_consecutive_up": 3,
+    })
+
+    money: Dict[str, Any] = field(default_factory=lambda: {
+        "min_score": 50,
+        "top_n": 500,
+        "min_amount": 100_000_000,
     })
     
     # 综合策略权重配置（整合5大策略）
@@ -243,6 +345,19 @@ class Config:
                 "multi_factor": self.strategy.multi_factor,
                 "ai_technical": self.strategy.ai_technical,
                 "institution": self.strategy.institution,
+                "box_breakout": self.strategy.box_breakout,
+                "ma_divergence": self.strategy.ma_divergence,
+                "rsi_oversold": self.strategy.rsi_oversold,
+                "new_high_break": self.strategy.new_high_break,
+                "consecutive_positive": self.strategy.consecutive_positive,
+                "bottom_rebound": self.strategy.bottom_rebound,
+                "net_inflow": self.strategy.net_inflow,
+                "trend_confirmation": self.strategy.trend_confirmation,
+                "launch_fingerprint": self.strategy.launch_fingerprint,
+                "bottom": self.strategy.bottom,
+                "launch": self.strategy.launch,
+                "trend": self.strategy.trend,
+                "money": self.strategy.money,
                 "composite_strategy": self.strategy.composite_strategy,
                 "fundamental_filter": self.strategy.fundamental_filter,
             },
